@@ -4,7 +4,7 @@ import os
 from logica import LogicaTetris
 from vista2 import VistaTetris       # Mantenemos "vista2" porque te funcionó perfecto
 from persistance import PersistenciaTetris 
-#hola
+
 class JuegoTetris:
     def __init__(self):
         pygame.init()
