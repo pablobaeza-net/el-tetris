@@ -1,0 +1,94 @@
+import json
+import os
+from datetime import datetime
+
+# ==========================================
+# 1. CONFIGURACIÓN DEL SISTEMA (Límites)
+# ==========================================
+# Suponiendo que mapeaste la carpeta del PC Host en la unidad Z:
+# o usas la ruta de red directa como r"\\HOST-PC\Resultados_Tetris"
+RUTA_COMPARTIDA = r"Z:\"  
+
+# ==========================================
+# 2. LÓGICA DE NEGOCIO (Categorización)
+# ==========================================
+def asignar_categoria(edad):
+    if edad <= 12:
+        return "Junior"
+    elif 13 <= edad <= 24:
+        return "Senior"
+    else:
+        return "Profesores"
+
+# ==========================================
+# 3. MÓDULO DE REGISTRO (Entrada de Datos)
+# ==========================================
+def registrar_jugador():
+    print("--- REGISTRO DE TORNEO TETRIS ---")
+    alias = input("Ingrese Alias del jugador: ").strip().upper()
+    nombre = input("Ingrese Nombre Real: ").strip()
+    colegio = input("Ingrese Colegio/Institución: ").strip()
+    
+    while True:
+        try:
+            edad = int(input("Ingrese Edad: "))
+            break
+        except ValueError:
+            print("Error: Por favor ingrese un número válido para la edad.")
+            
+    categoria = asignar_categoria(edad)
+    print(f"\n[!] Registro Exitoso. Categoría asignada: {categoria}")
+    
+    return {
+        "alias": alias,
+        "nombre_real": nombre,
+        "colegio": colegio,
+        "edad": edad,
+        "categoria": categoria,
+        "high_score": 0 # Puntaje inicial
+    }
+
+# ==========================================
+# 4. MÓDULO DE PERSISTENCIA (Salida de Datos)
+# ==========================================
+def guardar_puntaje(datos_jugador, nuevo_puntaje):
+    # Crear nombre de archivo basado en el alias
+    nombre_archivo = f"score_{datos_jugador['alias']}.json"
+    ruta_completa = os.path.join(RUTA_COMPARTIDA, nombre_archivo)
+    
+    # Comprobar si ya existe un registro previo (High Score anterior)
+    if os.path.exists(ruta_completa):
+        with open(ruta_completa, 'r') as archivo:
+            datos_guardados = json.load(archivo)
+            high_score_actual = datos_guardados.get("high_score", 0)
+    else:
+        high_score_actual = 0
+        
+    # Lógica de actualización: Solo sobreescribe si el nuevo es mayor
+    if nuevo_puntaje > high_score_actual:
+        datos_jugador["high_score"] = nuevo_puntaje
+        datos_jugador["ultima_actualizacion"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        
+        # Guardar en la carpeta compartida de la red
+        with open(ruta_completa, 'w') as archivo:
+            json.dump(datos_jugador, archivo, indent=4)
+        print(f"\n[+] ¡NUEVO HIGH SCORE GUARDADO! Puntos: {nuevo_puntaje}")
+    else:
+        print(f"\n[-] Buen intento. Tu High Score sigue siendo: {high_score_actual}")
+
+# ==========================================
+# 5. SIMULACIÓN DEL FLUJO PRINCIPAL
+# ==========================================
+def main():
+    jugador = registrar_jugador()
+    
+    # Aquí iría la integración con tu motor de Tetris (Pygame, etc.)
+    # Simulamos que el jugador jugó y perdió (Top Out)
+    print("\n... Jugando Tetris ...")
+    puntaje_obtenido = int(input("Simula el puntaje obtenido al perder: "))
+    
+    # Guardamos automáticamente al perder
+    guardar_puntaje(jugador, puntaje_obtenido)
+
+if __name__ == "__main__":
+    main()
