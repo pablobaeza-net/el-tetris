@@ -59,32 +59,76 @@ class VistaTetris:
         self.pantalla.blit(instruc, ((500 - instruc.get_width()) // 2, 680))
         pygame.display.flip()
 
-    def dibujar_registro(self, datos, campo_actual):
+    def dibujar_registro(self, datos, campo_actual, es_competitivo=False):
         self.pantalla.fill(NEGRO)
         
-        titulo = self.fuente_titulos.render("DATOS JUGADOR", True, AMARILLO)
-        self.pantalla.blit(titulo, ((500 - titulo.get_width()) // 2, 50))
+        # ✅ TÍTULO ESPECIAL PARA COMPETITIVO
+        if es_competitivo:
+            titulo = self.fuente_titulos.render("🏆 MODO COMPETITIVO", True, AMARILLO)
+            advertencia = self.fuente_med.render("⚠️ TODOS LOS CAMPOS OBLIGATORIOS ⚠️", True, ROJO)
+        else:
+            titulo = self.fuente_titulos.render("DATOS JUGADOR", True, AMARILLO)
+            advertencia = self.fuente_med.render("Solo alias obligatorio", True, VERDE)
+            
+        self.pantalla.blit(titulo, ((500 - titulo.get_width()) // 2, 30))
+        self.pantalla.blit(advertencia, ((500 - advertencia.get_width()) // 2, 80))
         
         campos_nombres = ["alias", "nombre_real", "institucion", "edad"]
-        etiquetas = ["Alias (Obligatorio):", "Nombre Real:", "Institución:", "Edad:"]
+        etiquetas = ["Alias:", "Nombre Real:", "Institución:", "Edad (5-100):"]
         
         y_base = 130
         for i, campo in enumerate(campos_nombres):
-            lbl = self.fuente_med.render(etiquetas[i], True, BLANCO)
+            # Resaltar campos vacíos en modo competitivo
+            color_etiqueta = ROJO if es_competitivo and datos[campo].strip() == "" else BLANCO
+            lbl = self.fuente_med.render(etiquetas[i], True, color_etiqueta)
             self.pantalla.blit(lbl, (50, y_base + (i * 100)))
             
-            color_caja = VERDE if i == campo_actual else GRIS
-            pygame.draw.rect(self.pantalla, color_caja, (50, y_base + 35 + (i * 100), 400, 40), 2)
+            # Color de caja según estado
+            if es_competitivo and datos[campo].strip() == "":
+                color_caja = ROJO  # Campo vacío
+            elif i == campo_actual:
+                color_caja = VERDE  # Activo
+            else:
+                color_caja = GRIS  # Normal
+                
+            pygame.draw.rect(self.pantalla, color_caja, (50, y_base + 35 + (i * 100), 400, 40), 3)
             
-            txt = self.fuente_med.render(datos[campo] + ("_" if i == campo_actual else ""), True, BLANCO if i == campo_actual else (150, 150, 150))
+            color_texto = BLANCO if i == campo_actual else (150, 150, 150)
+            txt = self.fuente_med.render(datos[campo] + ("_" if i == campo_actual else ""), True, color_texto)
             self.pantalla.blit(txt, (60, y_base + 40 + (i * 100)))
 
-        instruc = self.fuente_peq.render("↓↑ Moverse | ⏎ Enter para avanzar/jugar | ESC Volver", True, BLANCO)
+        # ✅ MOSTRAR SI FALTA ALGO PARA JUGAR
+        if es_competitivo:
+            campos_validos = all(datos[campo].strip() != "" for campo in campos_nombres)
+            try:
+                edad = int(datos["edad"])
+                edad_valida = 5 <= edad <= 100
+            except:
+                edad_valida = False
+            
+            if not campos_validos or not edad_valida:
+                error_msg = self.fuente_med.render("❌ FALTAN DATOS VÁLIDOS", True, ROJO)
+                self.pantalla.blit(error_msg, ((500 - error_msg.get_width()) // 2, 620))
+            else:
+                listo_msg = self.fuente_med.render("✅ ¡LISTO! Presiona ENTER", True, VERDE)
+                self.pantalla.blit(listo_msg, ((500 - listo_msg.get_width()) // 2, 620))
+        else:
+            listo_msg = self.fuente_med.render("✅ Presiona ENTER para jugar", True, VERDE)
+            self.pantalla.blit(listo_msg, ((500 - listo_msg.get_width()) // 2, 620))
+
+        instruc = self.fuente_peq.render("↓↑ Moverse | ⏎ Enter para jugar | ESC Volver", True, BLANCO)
         self.pantalla.blit(instruc, ((500 - instruc.get_width()) // 2, 680))
         pygame.display.flip()
 
-    def dibujar_tablero(self, tablero, pieza, x, y, puntos, siguiente_pieza, pieza_hold, top_puntajes):
+    def dibujar_tablero(self, tablero, pieza, x, y, puntos, siguiente_pieza, pieza_hold, top_puntajes, modo_juego):
         self.pantalla.fill(NEGRO)
+        
+        # ✅ MOSTRAR MODO EN TABLERO
+        if modo_juego == "competitivo":
+            modo_txt = self.fuente_peq.render("🏆 COMPETITIVO", True, AMARILLO)
+        else:
+            modo_txt = self.fuente_peq.render("🎯 ENTRENAMIENTO", True, VERDE)
+        self.pantalla.blit(modo_txt, (10, 10))
         
         offset_x, offset_y = 50, 40 
         
@@ -132,7 +176,7 @@ class VistaTetris:
             self.dibujar_pieza_mini(siguiente_pieza, panel_x + 25, 180)
             
         # Hold
-        h_label = self.fuente_peq.render("HOLD (H)", True, VERDE)
+        h_label = self.fuente_peq.render("HOLD (C)", True, VERDE)
         self.pantalla.blit(h_label, (panel_x + 15, 260))
         pygame.draw.rect(self.pantalla, NEGRO, (panel_x + 10, 285, 110, 80))
         pygame.draw.rect(self.pantalla, BLANCO, (panel_x + 10, 285, 110, 80), 2)
@@ -140,7 +184,7 @@ class VistaTetris:
             self.dibujar_pieza_mini(pieza_hold, panel_x + 25, 300)
         
         # Controles
-        ctrls = ["←→ MOVER", "↓ RÁPIDO", "↑ ROTAR", "SPC DROP", "H HOLD", "ESC SALIR"]
+        ctrls = ["←→ MOVER", "↓ RÁPIDO", "↑ ROTAR", "SPC DROP", "C HOLD", "ESC SALIR"]
         for i, ctrl in enumerate(ctrls):
             c_txt = self.fuente_peq.render(ctrl, True, BLANCO)
             self.pantalla.blit(c_txt, (panel_x + 10, 410 + i * 25))
@@ -158,13 +202,20 @@ class VistaTetris:
                     pygame.draw.rect(self.pantalla, color, (x, y, bloque_mini, bloque_mini))
                     pygame.draw.rect(self.pantalla, BLANCO, (x, y, bloque_mini, bloque_mini), 1)
 
-    def dibujar_gameover(self, puntos):
+    def dibujar_gameover(self, puntos, modo_juego):
         self.pantalla.fill(ROJO)
         msg = self.fuente_grande.render("GAME OVER", True, BLANCO)
         self.pantalla.blit(msg, ((500 - msg.get_width()) // 2, 250))
         
-        pts = self.fuente_med.render(f"PUNTOS: {puntos}", True, AMARILLO)
-        self.pantalla.blit(pts, ((500 - pts.get_width()) // 2, 350))
+        # ✅ MOSTRAR MODO Y PUNTOS
+        if modo_juego == "competitivo":
+            modo_txt = self.fuente_med.render("🏆 COMPETITIVO", True, AMARILLO)
+        else:
+            modo_txt = self.fuente_med.render("🎯 ENTRENAMIENTO", True, VERDE)
+        self.pantalla.blit(modo_txt, ((500 - modo_txt.get_width()) // 2, 340))
+        
+        pts = self.fuente_med.render(f"PUNTOS: {puntos}", True, BLANCO)
+        self.pantalla.blit(pts, ((500 - pts.get_width()) // 2, 390))
         
         info = self.fuente_peq.render("Presiona ENTER para volver al menú", True, BLANCO)
         self.pantalla.blit(info, ((500 - info.get_width()) // 2, 450))
