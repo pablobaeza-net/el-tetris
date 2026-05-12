@@ -4,7 +4,6 @@ class LogicaTetris:
     def __init__(self):
         self.ancho = 10
         self.alto = 20
-        # Tablero numérico: 0 es vacío, 1-7 son colores
         self.tablero = [[0 for _ in range(self.ancho)] for _ in range(self.alto)]
         
         self.piezas = [
@@ -18,19 +17,41 @@ class LogicaTetris:
         ]
         
         self.puntos = 0
-        self.siguiente_idx = random.randint(0, len(self.piezas)-1)
+        
+        # 🆕 BAG SYSTEM (7-Bag Randomizer)
+        self.bolsa = list(range(len(self.piezas)))
+        random.shuffle(self.bolsa)
+        self.indice_bolsa = 0
+        
+        # Inicializar primera siguiente_pieza
+        self.siguiente_idx = self.bolsa[0]
         self.siguiente_pieza = {'forma': self.piezas[self.siguiente_idx], 'color_idx': self.siguiente_idx}
+        
+        # Crear primera pieza actual
+        self.nueva_pieza()
+        
         self.pieza_hold = None
         self.ya_cambio_hold = False
+
+    def generar_siguiente(self):
+        """Genera la siguiente pieza usando el bag system"""
+        self.siguiente_idx = self.bolsa[self.indice_bolsa]
+        self.siguiente_pieza = {'forma': self.piezas[self.siguiente_idx], 'color_idx': self.siguiente_idx}
+        self.indice_bolsa += 1
         
-        self.nueva_pieza()
+        # Si se acabó la bolsa, crear nueva bolsa mezclada
+        if self.indice_bolsa >= len(self.bolsa):
+            self.bolsa = list(range(len(self.piezas)))
+            random.shuffle(self.bolsa)
+            self.indice_bolsa = 0
 
     def nueva_pieza(self):
+        """Nueva pieza toma la que era 'siguiente'"""
         self.tipo_pieza = self.siguiente_idx
         self.pieza = {'forma': self.piezas[self.tipo_pieza], 'color_idx': self.tipo_pieza}
         
-        self.siguiente_idx = random.randint(0, len(self.piezas)-1)
-        self.siguiente_pieza = {'forma': self.piezas[self.siguiente_idx], 'color_idx': self.siguiente_idx}
+        # Generar nueva siguiente
+        self.generar_siguiente()
         
         self.x = self.ancho // 2 - len(self.pieza['forma'][0]) // 2
         self.y = 0
