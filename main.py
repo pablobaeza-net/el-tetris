@@ -4,32 +4,30 @@ from logica import LogicaTetris
 from vista2 import VistaTetris
 from persistance import PersistenciaTetris
 
-
 class JuegoTetris:
     def __init__(self):
         pygame.init()
         self.pantalla = pygame.display.set_mode((500, 750))
         pygame.display.set_caption("Tetris Competitivo")
         
-        # Música
         pygame.mixer.init()
         try:
-            pygame.mixer.music.load("musi.mp3") 
+            pygame.mixer.music.load("musi.mp3")
             pygame.mixer.music.set_volume(0.4)
             pygame.mixer.music.play(-1)
         except:
-            print("Archivo 'musi.mp3' no encontrado, iniciando en silencio.")
+            print("Archivo 'musi.mp3' no encontrado")
 
         self.logica = LogicaTetris()
         self.vista = VistaTetris(self.pantalla)
         self.persistencia = PersistenciaTetris()
         
-        self.estado = "inicio_modo" 
+        self.estado = "inicio_modo"
         self.modo_juego = None
         self.seleccion_menu = 0
         self.datos_jugador = {"alias": "", "nombre_real": "", "institucion": "", "edad": ""}
         self.campos_lista = ["alias", "nombre_real", "institucion", "edad"]
-        self.campo_activo = 0  
+        self.campo_activo = 0
         self.drop_time = 0
         self.drop_speed = 500
         self.top_puntajes = []
@@ -81,8 +79,6 @@ class JuegoTetris:
                     elif self.seleccion_menu == 2:
                         pygame.quit()
                         sys.exit()
-        
-        # ¡ESTA ES LA LÍNEA QUE FALTABA! Por esto se veía todo negro.
         self.vista.dibujar_menu_modos(self.seleccion_menu)
 
     def manejar_registro(self, eventos):
@@ -95,9 +91,24 @@ class JuegoTetris:
                 elif event.key in [pygame.K_DOWN, pygame.K_TAB]:
                     self.campo_activo = (self.campo_activo + 1) % 4
                 elif event.key == pygame.K_RETURN:
-                    # Obligamos a que tenga al menos un alias para continuar
-                    if self.datos_jugador["alias"].strip() != "":
-                        self.iniciar_partida()
+                    if self.modo_juego == "competitivo":
+                        campos_validos = True
+                        for campo in self.campos_lista:
+                            if self.datos_jugador[campo].strip() == "":
+                                campos_validos = False
+                                break
+                        try:
+                            edad = int(self.datos_jugador["edad"])
+                            if edad < 5 or edad > 100:
+                                campos_validos = False
+                        except ValueError:
+                            if self.datos_jugador["edad"].strip() != "":
+                                campos_validos = False
+                        if campos_validos:
+                            self.iniciar_partida()
+                    else:
+                        if self.datos_jugador["alias"].strip() != "":
+                            self.iniciar_partida()
                 elif event.key == pygame.K_BACKSPACE:
                     c = self.campos_lista[self.campo_activo]
                     self.datos_jugador[c] = self.datos_jugador[c][:-1]
@@ -105,7 +116,7 @@ class JuegoTetris:
                     c = self.campos_lista[self.campo_activo]
                     if len(self.datos_jugador[c]) < 20 and event.unicode.isprintable():
                         self.datos_jugador[c] += event.unicode
-        self.vista.dibujar_registro(self.datos_jugador, self.campo_activo)
+        self.vista.dibujar_registro(self.datos_jugador, self.campo_activo, self.modo_juego == "competitivo")
 
     def actualizar_juego(self, eventos):
         for event in eventos:
@@ -115,7 +126,7 @@ class JuegoTetris:
                 elif event.key == pygame.K_DOWN: self.logica.bajar()
                 elif event.key == pygame.K_UP: self.logica.rotar()
                 elif event.key == pygame.K_SPACE: self.logica.hard_drop()
-                elif event.key == pygame.K_h: self.logica.hacer_hold()
+                elif event.key == pygame.K_c: self.logica.hacer_hold()
                 elif event.key == pygame.K_ESCAPE: self.estado = "inicio_modo"
         
         now = pygame.time.get_ticks()
@@ -134,14 +145,16 @@ class JuegoTetris:
             self.logica.puntos, 
             self.logica.siguiente_pieza, 
             self.logica.pieza_hold, 
-            self.top_puntajes
+            self.top_puntajes,
+            self.modo_juego
         )
 
     def manejar_gameover(self, eventos):
         for event in eventos:
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_RETURN: self.estado = "inicio_modo"
-        self.vista.dibujar_gameover(self.logica.puntos)
+                if event.key == pygame.K_RETURN: 
+                    self.estado = "inicio_modo"
+        self.vista.dibujar_gameover(self.logica.puntos, self.modo_juego)
 
 if __name__ == "__main__":
     juego = JuegoTetris()
