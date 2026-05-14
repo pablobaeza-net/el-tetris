@@ -1,125 +1,108 @@
 import random
+import copy
+
+ANCHO_TAB = 10
+ALTO_TAB = 20
+
+PIEZAS = [
+    {'forma': [[1, 1, 1, 1]], 'color_idx': 0},  # I
+    {'forma': [[1, 1], [1, 1]], 'color_idx': 1},  # O
+    {'forma': [[0, 1, 0], [1, 1, 1]], 'color_idx': 2},  # T
+    {'forma': [[0, 1, 1], [1, 1, 0]], 'color_idx': 3},  # S
+    {'forma': [[1, 1, 0], [0, 1, 1]], 'color_idx': 4},  # Z
+    {'forma': [[1, 0, 0], [1, 1, 1]], 'color_idx': 5},  # J
+    {'forma': [[0, 0, 1], [1, 1, 1]], 'color_idx': 6}   # L
+]
 
 class LogicaTetris:
     def __init__(self):
-        self.ancho = 10
-        self.alto = 20
-        self.tablero = [[0 for _ in range(self.ancho)] for _ in range(self.alto)]
-        
-        self.piezas = [
-            [[1, 1, 1, 1]],         # I
-            [[1, 1], [1, 1]],       # O
-            [[0, 1, 0], [1, 1, 1]], # T
-            [[0, 1, 1], [1, 1, 0]], # S
-            [[1, 1, 0], [0, 1, 1]], # Z
-            [[1, 0, 0], [1, 1, 1]], # J
-            [[0, 0, 1], [1, 1, 1]]  # L
-        ]
-        
+        self.tablero = [[0] * ANCHO_TAB for _ in range(ALTO_TAB)]
         self.puntos = 0
-        
-        # 🆕 BAG SYSTEM (7-Bag Randomizer)
-        self.bolsa = list(range(len(self.piezas)))
-        random.shuffle(self.bolsa)
-        self.indice_bolsa = 0
-        
-        # Inicializar primera siguiente_pieza
-        self.siguiente_idx = self.bolsa[0]
-        self.siguiente_pieza = {'forma': self.piezas[self.siguiente_idx], 'color_idx': self.siguiente_idx}
-        
-        # Crear primera pieza actual
-        self.nueva_pieza()
-        
+        self.siguiente_pieza = copy.deepcopy(random.choice(PIEZAS))
         self.pieza_hold = None
         self.ya_cambio_hold = False
+        self.nueva_pieza_en_juego()
 
-    def generar_siguiente(self):
-        """Genera la siguiente pieza usando el bag system"""
-        self.siguiente_idx = self.bolsa[self.indice_bolsa]
-        self.siguiente_pieza = {'forma': self.piezas[self.siguiente_idx], 'color_idx': self.siguiente_idx}
-        self.indice_bolsa += 1
+    def nueva_pieza_en_juego(self):
+        self.pieza = self.siguiente_pieza
         
-        # Si se acabó la bolsa, crear nueva bolsa mezclada
-        if self.indice_bolsa >= len(self.bolsa):
-            self.bolsa = list(range(len(self.piezas)))
-            random.shuffle(self.bolsa)
-            self.indice_bolsa = 0
-
-    def nueva_pieza(self):
-        """Nueva pieza toma la que era 'siguiente'"""
-        self.tipo_pieza = self.siguiente_idx
-        self.pieza = {'forma': self.piezas[self.tipo_pieza], 'color_idx': self.tipo_pieza}
+        # 🆕 Lógica para que la siguiente pieza NO sea igual a la actual
+        nueva_sig = copy.deepcopy(random.choice(PIEZAS))
+        while nueva_sig['color_idx'] == self.pieza['color_idx']:
+            nueva_sig = copy.deepcopy(random.choice(PIEZAS))
+            
+        self.siguiente_pieza = nueva_sig
         
-        # Generar nueva siguiente
-        self.generar_siguiente()
-        
-        self.x = self.ancho // 2 - len(self.pieza['forma'][0]) // 2
+        self.x = 3
         self.y = 0
         self.ya_cambio_hold = False
-
-    def mover(self, dx, dy):
-        if not self.colision(self.x + dx, self.y + dy, self.pieza['forma']):
-            self.x += dx
-            self.y += dy
-            return True
-        return False
-
-    def rotar(self):
-        pieza_rotada = list(zip(*self.pieza['forma'][::-1]))
-        if not self.colision(self.x, self.y, pieza_rotada):
-            self.pieza['forma'] = pieza_rotada
-
-    def colision(self, nx, ny, forma):
-        for r, fila in enumerate(forma):
-            for c, valor in enumerate(fila):
-                if valor:
-                    if nx + c < 0 or nx + c >= self.ancho or ny + r >= self.alto:
-                        return True
-                    if ny + r >= 0 and self.tablero[ny + r][nx + c] != 0:
-                        return True
-        return False
-
-    def fijar_pieza(self):
-        for r, fila in enumerate(self.pieza['forma']):
-            for c, valor in enumerate(fila):
-                if valor:
-                    self.tablero[self.y + r][self.x + c] = self.pieza['color_idx'] + 1
-        self.limpiar_lineas()
-        self.nueva_pieza()
-        return self.colision(self.x, self.y, self.pieza['forma'])
-
-    def limpiar_lineas(self):
-        lineas_a_borrar = [i for i, fila in enumerate(self.tablero) if all(celda != 0 for celda in fila)]
-        for i in lineas_a_borrar:
-            del self.tablero[i]
-            self.tablero.insert(0, [0 for _ in range(self.ancho)])
-        
-        puntos_base = [0, 100, 300, 500, 800]
-        self.puntos += puntos_base[len(lineas_a_borrar)]
-
-    def bajar(self):
-        if not self.mover(0, 1):
-            return self.fijar_pieza()
-        return False
-
-    def hard_drop(self):
-        while self.mover(0, 1):
-            pass
-        return self.fijar_pieza()
+        return self.colision()
 
     def hacer_hold(self):
-        if self.ya_cambio_hold: return
-        
+        if self.ya_cambio_hold:
+            return
         if self.pieza_hold is None:
-            self.pieza_hold = {'forma': self.piezas[self.tipo_pieza], 'color_idx': self.tipo_pieza}
-            self.nueva_pieza()
+            self.pieza_hold = copy.deepcopy(PIEZAS[self.pieza['color_idx']])
+            self.nueva_pieza_en_juego()
         else:
-            temp_idx = self.tipo_pieza
-            self.tipo_pieza = self.pieza_hold['color_idx']
-            self.pieza = {'forma': self.piezas[self.tipo_pieza], 'color_idx': self.tipo_pieza}
-            self.pieza_hold = {'forma': self.piezas[temp_idx], 'color_idx': temp_idx}
-            
-            self.x = self.ancho // 2 - len(self.pieza['forma'][0]) // 2
+            aux = copy.deepcopy(PIEZAS[self.pieza['color_idx']])
+            self.pieza = copy.deepcopy(self.pieza_hold)
+            self.pieza_hold = aux
+            self.x = 3
             self.y = 0
-            
         self.ya_cambio_hold = True
+
+    def rotar(self):
+        forma_original = self.pieza['forma']
+        self.pieza['forma'] = [list(fila) for fila in zip(*self.pieza['forma'][::-1])]
+        if self.colision():
+            self.pieza['forma'] = forma_original
+
+    def colision(self, dx=0, dy=0):
+        for i, fila in enumerate(self.pieza['forma']):
+            for j, celda in enumerate(fila):
+                if celda:
+                    nx, ny = self.x + j + dx, self.y + i + dy
+                    if nx < 0 or nx >= ANCHO_TAB or ny >= ALTO_TAB:
+                        return True
+                    if ny >= 0 and self.tablero[ny][nx]:
+                        return True
+        return False
+
+    def bajar(self):
+        if not self.colision(dy=1):
+            self.y += 1
+            return False
+        else:
+            return self.fijar_pieza()
+
+    def fijar_pieza(self):
+        for i, fila in enumerate(self.pieza['forma']):
+            for j, celda in enumerate(fila):
+                if celda:
+                    if self.y + i < 0: return True
+                    self.tablero[self.y + i][self.x + j] = self.pieza['color_idx'] + 1
+                    
+        # ✅ AQUÍ RECUPERAMOS TUS PUNTOS POR COLOCAR LA FICHA
+        self.puntos += 10
+        
+        self.limpiar_lineas()
+        return self.nueva_pieza_en_juego()
+
+    def limpiar_lineas(self):
+        nuevas = [f for f in self.tablero if not all(f)]
+        lineas = ALTO_TAB - len(nuevas)
+        self.tablero = [[0] * ANCHO_TAB for _ in range(lineas)] + nuevas
+        
+        # ✅ PUNTOS POR ELIMINAR LÍNEAS
+        self.puntos += lineas * 100
+
+    def mover(self, dx, dy):
+        if not self.colision(dx, dy):
+            self.x += dx
+            self.y += dy
+
+    def hard_drop(self):
+        while not self.colision(dy=1):
+            self.y += 1
+        return self.fijar_pieza()

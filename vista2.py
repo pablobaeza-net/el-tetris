@@ -62,7 +62,7 @@ class VistaTetris:
     def dibujar_registro(self, datos, campo_actual, es_competitivo=False):
         self.pantalla.fill(NEGRO)
         
-        # ✅ TÍTULO ESPECIAL PARA COMPETITIVO
+        # TÍTULO ESPECIAL PARA COMPETITIVO
         if es_competitivo:
             titulo = self.fuente_titulos.render("🏆 MODO COMPETITIVO", True, AMARILLO)
             advertencia = self.fuente_med.render("⚠️ TODOS LOS CAMPOS OBLIGATORIOS ⚠️", True, ROJO)
@@ -97,7 +97,7 @@ class VistaTetris:
             txt = self.fuente_med.render(datos[campo] + ("_" if i == campo_actual else ""), True, color_texto)
             self.pantalla.blit(txt, (60, y_base + 40 + (i * 100)))
 
-        # ✅ MOSTRAR SI FALTA ALGO PARA JUGAR
+        # MOSTRAR SI FALTA ALGO PARA JUGAR
         if es_competitivo:
             campos_validos = all(datos[campo].strip() != "" for campo in campos_nombres)
             try:
@@ -123,7 +123,7 @@ class VistaTetris:
     def dibujar_tablero(self, tablero, pieza, x, y, puntos, siguiente_pieza, pieza_hold, top_puntajes, modo_juego):
         self.pantalla.fill(NEGRO)
         
-        # ✅ MOSTRAR MODO EN TABLERO
+        # MOSTRAR MODO EN TABLERO
         if modo_juego == "competitivo":
             modo_txt = self.fuente_peq.render("🏆 COMPETITIVO", True, AMARILLO)
         else:
@@ -207,7 +207,7 @@ class VistaTetris:
         msg = self.fuente_grande.render("GAME OVER", True, BLANCO)
         self.pantalla.blit(msg, ((500 - msg.get_width()) // 2, 250))
         
-        # ✅ MOSTRAR MODO Y PUNTOS
+        # MOSTRAR MODO Y PUNTOS
         if modo_juego == "competitivo":
             modo_txt = self.fuente_med.render("🏆 COMPETITIVO", True, AMARILLO)
         else:
