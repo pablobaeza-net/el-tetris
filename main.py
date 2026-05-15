@@ -18,16 +18,16 @@ COLORS = [
     (0, 240, 0), (240, 0, 0), (0, 0, 240), (240, 160, 0)
 ]
 
-# CORREGIDO CONSTANTE SHAPES: Matrices geométricas completas de las 7 piezas oficiales
+# Matrices geométricas completas de los 7 bloques oficiales del juego
 SHAPES = [
     [[]],  # Indexación base 1
-    [[1, 1, 1, 1]],  # I
-    [[1, 1], [1, 1]],  # O
-    [[0, 1, 0], [1, 1, 1], [0, 0, 0]],  # T
-    [[1, 1, 0], [0, 1, 1], [0, 0, 0]],  # Z
-    [[0, 1, 1], [1, 1, 0], [0, 0, 0]],  # S
-    [[1, 0, 0], [1, 1, 1], [0, 0, 0]],  # J
-    [[0, 0, 1], [1, 1, 1], [0, 0, 0]]   # L
+    [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]],  # I
+    [[1,1], [1,1]],                                # O
+    [[0,1,0], [1,1,1], [0,0,0]],                   # T
+    [[1,1,0], [0,1,1], [0,0,0]],                   # Z
+    [[0,1,1], [1,1,0], [0,0,0]],                   # S
+    [[1,0,0], [1,1,1], [0,0,0]],                   # J
+    [[0,0,1], [1,1,1], [0,0,0]]                    # L
 ]
 
 # --- RUTA PARA ALMACENAMIENTO PERSISTENTE ---
@@ -46,7 +46,7 @@ class Tetrimino:
         self.x = x
         self.y = y
         self.type = shape_idx
-        self.shape = SHAPES[self.type]
+        self.shape = [list(row) for row in SHAPES[self.type]]
         self.color = COLORS[self.type]
 
     def rotate(self):
@@ -64,7 +64,9 @@ class Board:
             for c, val in enumerate(row):
                 if val:
                     nx, ny = piece.x + c + adj_x, piece.y + r + adj_y
-                    if nx < 0 or nx >= GRID_WIDTH or ny >= GRID_HEIGHT or (ny >= 0 and self.grid[ny][nx]):
+                    if nx < 0 or nx >= GRID_WIDTH or ny >= GRID_HEIGHT:
+                        return False
+                    if ny >= 0 and self.grid[ny][nx]:
                         return False
         return True
 
@@ -154,7 +156,7 @@ class TetrisGame:
     def reset_game(self):
         self.board = Board()
         self.bag = []
-        self.queue = deque([Tetrimino(3, 0, self.get_random_piece_idx()) for _ in range(4)])
+        self.queue = deque([Tetrimino(3, -1, self.get_random_piece_idx()) for _ in range(4)])
         self.current_piece = self.queue.popleft()
         self.hold_piece = None
         self.can_hold = True
@@ -171,13 +173,13 @@ class TetrisGame:
             
         if not self.can_hold: return
         if self.hold_piece is None:
-            self.hold_piece = Tetrimino(3, 0, self.current_piece.type)
+            self.hold_piece = Tetrimino(3, -1, self.current_piece.type)
             self.current_piece = self.queue.popleft()
-            self.queue.append(Tetrimino(3, 0, self.get_random_piece_idx()))
+            self.queue.append(Tetrimino(3, -1, self.get_random_piece_idx()))
         else:
             temp_type = self.current_piece.type
-            self.current_piece = Tetrimino(3, 0, self.hold_piece.type)
-            self.hold_piece = Tetrimino(3, 0, temp_type)
+            self.current_piece = Tetrimino(3, -1, self.hold_piece.type)
+            self.hold_piece = Tetrimino(3, -1, temp_type)
         self.can_hold = False
 
     def draw_text_centered(self, text, y, font, color=(255, 255, 255)):
@@ -363,7 +365,7 @@ class TetrisGame:
         self.tiempo_mov_lateral += dt
         self.tiempo_mov_abajo += dt
 
-        INTERVALO_REPETICION_LATERAL = 95  
+        INTERVALO_REPETICION_LATERAL = 120  
         INTERVALO_REPETICION_ABAJO = 55    
 
         if keys[pygame.K_LEFT]:
@@ -386,6 +388,23 @@ class TetrisGame:
                 self.tiempo_mov_abajo = 0
         else:
             self.tiempo_mov_abajo = INTERVALO_REPETICION_ABAJO
+
+    def intentar_rotacion_con_kicks(self):
+        """Intenta rotar la pieza aplicando desplazamientos laterales si choca con bordes o bloques."""
+        temp_piece = Tetrimino(self.current_piece.x, self.current_piece.y, self.current_piece.type)
+        temp_piece.shape = [list(row) for row in self.current_piece.shape]
+        temp_piece.rotate()
+
+        # Lista de intentos de compensación horizontal (Wall Kicks)
+        # Para barras de 4x1 (I) u otras piezas, prueba quedarse en el sitio, moverse 1 o 2 espacios
+        pruebas_desplazamiento = [0, -1, 1, -2, 2]
+
+        for offset in pruebas_desplazamiento:
+            if self.board.is_valid_move(temp_piece, offset, 0):
+                self.current_piece.rotate()
+                self.current_piece.x += offset
+                return True
+        return False
 
     def run(self):
         while True:
@@ -443,8 +462,11 @@ class TetrisGame:
                         elif event.key == pygame.K_TAB:
                             if not self.is_login_active: self.active_field_idx = (self.active_field_idx + 1) % len(self.auth_order)
                         elif event.key == pygame.K_BACKSPACE:
-                            if self.is_login_active: self.login_alias = self.login_alias[:-1]
-                            else: self.auth_fields[self.auth_order[self.active_field_idx]] = self.auth_fields[self.auth_order[self.active_field_idx]][:-1]
+                            if self.is_login_active:
+                                self.login_alias = self.login_alias[:-1]
+                            else:
+                                active_fn = self.auth_order[self.active_field_idx]
+                                self.auth_fields[active_fn] = self.auth_fields[active_fn][:-1]
                         elif event.key == pygame.K_RETURN:
                             if self.is_login_active: self.process_login()
                             else:
@@ -484,7 +506,7 @@ class TetrisGame:
                                 self.save_score() 
                             else: 
                                 self.current_piece = nueva_pieza_temp
-                                self.queue.append(Tetrimino(3, 0, self.get_random_piece_idx()))
+                                self.queue.append(Tetrimino(3, -1, self.get_random_piece_idx()))
                                 self.can_hold = True
                         self.fall_time = 0
 
@@ -493,22 +515,9 @@ class TetrisGame:
                     if event.type == pygame.KEYDOWN:
                         if self.game_over and event.key == pygame.K_m: self.state = "MENU"
                         if not self.game_over:
-                            # --- MODIFICADO: Sistema de Rotación inteligente (Wall Kick) en evento discreto ---
+                            # MODIFICADO: Lógica de rotación fluida inteligente anticolición (Flecha Arriba)
                             if event.key == pygame.K_UP:
-                                old_shape = self.current_piece.shape
-                                self.current_piece.rotate()
-                                # 1. Intento de rotación estándar en el lugar
-                                if not self.board.is_valid_move(self.current_piece, 0, 0):
-                                    # 2. Wall Kick: Intenta patear un bloque a la izquierda
-                                    if self.board.is_valid_move(self.current_piece, -1, 0):
-                                        self.current_piece.x -= 1
-                                    # 3. Wall Kick: Intenta patear un bloque a la derecha
-                                    elif self.board.is_valid_move(self.current_piece, 1, 0):
-                                        self.current_piece.x += 1
-                                    # 4. Si no encaja en ningún lado, revierte la rotación
-                                    else:
-                                        self.current_piece.shape = old_shape
-                                        
+                                self.intentar_rotacion_con_kicks()
                             if event.key == pygame.K_SPACE:
                                 drop = 0
                                 while self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1; drop += 1
