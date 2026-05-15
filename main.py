@@ -18,7 +18,7 @@ COLORS = [
     (0, 240, 0), (240, 0, 0), (0, 0, 240), (240, 160, 0)
 ]
 
-# Definición geométrica completa de los 7 bloques sin errores de sintaxis
+# Definición geométrica de las 7 piezas
 SHAPES = [
     [[]],  # Indexación base 1
     [[1, 1, 1, 1]],  # I
@@ -93,21 +93,25 @@ class TetrisGame:
         self.clock = pygame.time.Clock()
         self.font_title = pygame.font.SysFont("Consolas", 45, bold=True)
         self.font_ui = pygame.font.SysFont("Consolas", 22, bold=True)
-        self.font_sm = pygame.font.SysFont("Consolas", 16, bold=True)
+        self.font_sm = pygame.font.SysFont("Consolas", 14, bold=True)
         
         self.state = "MENU"
         self.player_nick = ""
         self.usuarios = self.load_users()
         self.high_scores = self.load_scores()
         
-        # MODIFICADO: Nueva opción "PRACTICA" inyectada en el menú principal
         self.menu_options = ["JUGAR", "PRACTICA", "SALIR"]
         self.selected_idx = 0
-        self.modo_practica_activo = False # Flag para desactivar persistencia JSON
+        self.modo_practica_activo = False 
         
         self.bag = []
         self.auth_order = ["Alias", "Nombre", "Apellido", "Institucion"]
         self.categories = ["Junior", "Senior", "Profesor"]
+        
+        # Temporizadores internos para el movimiento continuo fluido manual
+        self.tiempo_mov_lateral = 0
+        self.tiempo_mov_abajo = 0
+        
         self.limpiar_formulario()
         self.reset_game()
 
@@ -122,10 +126,7 @@ class TetrisGame:
         return {}
 
     def save_score(self):
-        # MODIFICADO: Impedir escritura en archivo JSON si es modo práctica
-        if self.modo_practica_activo:
-            return
-            
+        if self.modo_practica_activo: return
         cat = self.usuarios.get(self.player_nick, {}).get("categoria", "Junior")
         if cat not in self.high_scores: self.high_scores[cat] = {}
         old_score = self.high_scores[cat].get(self.player_nick, 0)
@@ -134,8 +135,7 @@ class TetrisGame:
             with open(RUTA_SCORES, "w", encoding="utf-8") as f: json.dump(self.high_scores, f, indent=4)
 
     def save_users(self):
-        if self.modo_practica_activo:
-            return
+        if self.modo_practica_activo: return
         with open(RUTA_JUGADORES, "w", encoding="utf-8") as f: json.dump(self.usuarios, f, indent=4)
 
     def limpiar_formulario(self):
@@ -162,9 +162,10 @@ class TetrisGame:
         self.score = 0
         self.game_over = False
         self.fall_time = 0
+        self.tiempo_mov_lateral = 0
+        self.tiempo_mov_abajo = 0
 
     def handle_hold(self):
-        # El modo práctica permite HOLD de manera predeterminada al no poseer restricciones de categoría
         if not self.modo_practica_activo:
             user_info = self.usuarios.get(self.player_nick, {})
             if user_info.get("categoria", "").upper() != "JUNIOR": return
@@ -281,12 +282,11 @@ class TetrisGame:
         ux = SCREEN_WIDTH + 20
         pygame.draw.rect(self.screen, (40, 40, 50), (SCREEN_WIDTH, 0, UI_WIDTH, SCREEN_HEIGHT))
         
-        # MODIFICADO: Renderizado condicional adaptado para el modo práctica aislado
         if self.modo_practica_activo:
             nick_display = "INVITADO"
             categoria_txt = "PRACTICA"
             nombre_real, apellido_real = "MODO", "PRACTICA"
-            ver_hold = True # El modo práctica incluye el panel de HOLD
+            ver_hold = True 
         else:
             user_info = self.usuarios.get(self.player_nick, {})
             nick_display = self.player_nick
@@ -359,13 +359,40 @@ class TetrisGame:
         else:
             self.auth_error = "El alias no esta registrado."
 
+    def manejar_entradas_juego(self, dt):
+        """Maneja el movimiento fluido continuo consultando el estado del teclado."""
+        keys = pygame.key.get_pressed()
+        self.tiempo_mov_lateral += dt
+        self.tiempo_mov_abajo += dt
+
+        # Movimiento hacia la izquierda continuo (cada 50 ms tras pulsación inicial)
+        if keys[pygame.K_LEFT]:
+            if self.tiempo_mov_lateral > 50:
+                if self.board.is_valid_move(self.current_piece, -1, 0): self.current_piece.x -= 1
+                self.tiempo_mov_lateral = 0
+        # Movimiento hacia la derecha continuo
+        elif keys[pygame.K_RIGHT]:
+            if self.tiempo_mov_lateral > 50:
+                if self.board.is_valid_move(self.current_piece, 1, 0): self.current_piece.x += 1
+                self.tiempo_mov_lateral = 0
+        else:
+            # Si no se presionan flechas laterales, permite un toque instantáneo al hacer clic de nuevo
+            self.tiempo_mov_lateral = 60
+
+        # Caída suave manual acelerada continua (cada 30 ms)
+        if keys[pygame.K_DOWN]:
+            if self.tiempo_mov_abajo > 30:
+                if self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1
+                self.tiempo_mov_abajo = 0
+        else:
+            self.tiempo_mov_abajo = 40
+
     def run(self):
         while True:
             dt = self.clock.get_rawtime()
             self.clock.tick()
             
             if self.state == "MENU":
-                pygame.key.set_repeat(0, 0)  
                 self.draw_menu()
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -377,7 +404,6 @@ class TetrisGame:
                                 self.limpiar_formulario()
                                 self.state = "AUTH_MENU"
                             elif self.selected_idx == 1:
-                                # MODIFICADO: Lanzar directamente la partida libre en Modo Práctica
                                 self.modo_practica_activo = True
                                 self.reset_game()
                                 self.state = "GAME"
@@ -392,7 +418,6 @@ class TetrisGame:
                         else: pygame.quit(); sys.exit()
 
             elif self.state == "AUTH_MENU":
-                pygame.key.set_repeat(0, 0)
                 self.draw_auth_screen()
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -429,16 +454,18 @@ class TetrisGame:
                             char = event.unicode
                             if char:
                                 if self.is_login_active:
-                                    if char != " " and len(self.login_alias) < 10: self.login_alias += char
+                                    if char != " " and len(self.login_alias) < 25: self.login_alias += char
                                 else:
                                     active_fn = self.auth_order[self.active_field_idx]
-                                    if active_fn == "Alias" and char != " " and len(self.auth_fields[active_fn]) < 10: self.auth_fields[active_fn] += char
-                                    elif active_fn in ["Nombre", "Apellido"] and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 15: self.auth_fields[active_fn] += char
+                                    if active_fn == "Alias" and char != " " and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
+                                    elif active_fn in ["Nombre", "Apellido"] and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
                                     elif active_fn == "Institucion" and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
 
             elif self.state == "GAME":
-                pygame.key.set_repeat(150, 40)
                 if not self.game_over:
+                    # Aplicar la función de escaneo continuo de las flechas (Laterales y Abajo)
+                    self.manejar_entradas_juego(dt)
+                    
                     self.fall_time += dt
                     self.board.tiempo_acumulado_velocidad += dt
                     if self.board.tiempo_acumulado_velocidad >= 30000:  
@@ -455,7 +482,7 @@ class TetrisGame:
                             nueva_pieza_temp = self.queue.popleft()
                             if not self.board.is_valid_move(nueva_pieza_temp, 0, 0): 
                                 self.game_over = True
-                                self.save_score() # Solo se guardará si el flag de práctica está en False
+                                self.save_score() 
                             else: 
                                 self.current_piece = nueva_pieza_temp
                                 self.queue.append(Tetrimino(3, 0, self.get_random_piece_idx()))
@@ -467,12 +494,11 @@ class TetrisGame:
                     if event.type == pygame.KEYDOWN:
                         if self.game_over and event.key == pygame.K_m: self.state = "MENU"
                         if not self.game_over:
-                            if event.key == pygame.K_LEFT and self.board.is_valid_move(self.current_piece, -1, 0): self.current_piece.x -= 1
-                            if event.key == pygame.K_RIGHT and self.board.is_valid_move(self.current_piece, 1, 0): self.current_piece.x += 1
-                            if event.key == pygame.K_DOWN and self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1
+                            # MODIFICADO: Rotación confinada ESTRICTAMENTE al evento discreto KEYDOWN (no se puede mantener presionada)
                             if event.key == pygame.K_UP:
                                 old = self.current_piece.shape; self.current_piece.rotate()
                                 if not self.board.is_valid_move(self.current_piece, 0, 0): self.current_piece.shape = old
+                            # Caída instantánea dura (Espacio) e intercambio (C) se mantienen por pulsaciones individuales
                             if event.key == pygame.K_SPACE:
                                 drop = 0
                                 while self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1; drop += 1
