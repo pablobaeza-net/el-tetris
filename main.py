@@ -18,16 +18,16 @@ COLORS = [
     (0, 240, 0), (240, 0, 0), (0, 0, 240), (240, 160, 0)
 ]
 
-# Definición geométrica de las 7 piezas
+# CORREGIDO CONSTANTE SHAPES: Matrices geométricas completas de las 7 piezas oficiales
 SHAPES = [
     [[]],  # Indexación base 1
     [[1, 1, 1, 1]],  # I
     [[1, 1], [1, 1]],  # O
-    [[0, 1, 0], [1, 1, 1]],  # T
-    [[1, 1, 0], [0, 1, 1]],  # Z
-    [[0, 1, 1], [1, 1, 0]],  # S
-    [[1, 0, 0], [1, 1, 1]],  # J
-    [[0, 0, 1], [1, 1, 1]]   # L
+    [[0, 1, 0], [1, 1, 1], [0, 0, 0]],  # T
+    [[1, 1, 0], [0, 1, 1], [0, 0, 0]],  # Z
+    [[0, 1, 1], [1, 1, 0], [0, 0, 0]],  # S
+    [[1, 0, 0], [1, 1, 1], [0, 0, 0]],  # J
+    [[0, 0, 1], [1, 1, 1], [0, 0, 0]]   # L
 ]
 
 # --- RUTA PARA ALMACENAMIENTO PERSISTENTE ---
@@ -108,7 +108,6 @@ class TetrisGame:
         self.auth_order = ["Alias", "Nombre", "Apellido", "Institucion"]
         self.categories = ["Junior", "Senior", "Profesor"]
         
-        # Temporizadores internos para el movimiento continuo fluido manual
         self.tiempo_mov_lateral = 0
         self.tiempo_mov_abajo = 0
         
@@ -360,32 +359,33 @@ class TetrisGame:
             self.auth_error = "El alias no esta registrado."
 
     def manejar_entradas_juego(self, dt):
-        """Maneja el movimiento fluido continuo consultando el estado del teclado."""
         keys = pygame.key.get_pressed()
         self.tiempo_mov_lateral += dt
         self.tiempo_mov_abajo += dt
 
-        # Movimiento hacia la izquierda continuo (cada 50 ms tras pulsación inicial)
+        INTERVALO_REPETICION_LATERAL = 95  
+        INTERVALO_REPETICION_ABAJO = 55    
+
         if keys[pygame.K_LEFT]:
-            if self.tiempo_mov_lateral > 50:
-                if self.board.is_valid_move(self.current_piece, -1, 0): self.current_piece.x -= 1
+            if self.tiempo_mov_lateral >= INTERVALO_REPETICION_LATERAL:
+                if self.board.is_valid_move(self.current_piece, -1, 0): 
+                    self.current_piece.x -= 1
                 self.tiempo_mov_lateral = 0
-        # Movimiento hacia la derecha continuo
         elif keys[pygame.K_RIGHT]:
-            if self.tiempo_mov_lateral > 50:
-                if self.board.is_valid_move(self.current_piece, 1, 0): self.current_piece.x += 1
+            if self.tiempo_mov_lateral >= INTERVALO_REPETICION_LATERAL:
+                if self.board.is_valid_move(self.current_piece, 1, 0): 
+                    self.current_piece.x += 1
                 self.tiempo_mov_lateral = 0
         else:
-            # Si no se presionan flechas laterales, permite un toque instantáneo al hacer clic de nuevo
-            self.tiempo_mov_lateral = 60
+            self.tiempo_mov_lateral = INTERVALO_REPETICION_LATERAL
 
-        # Caída suave manual acelerada continua (cada 30 ms)
         if keys[pygame.K_DOWN]:
-            if self.tiempo_mov_abajo > 30:
-                if self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1
+            if self.tiempo_mov_abajo >= INTERVALO_REPETICION_ABAJO:
+                if self.board.is_valid_move(self.current_piece, 0, 1): 
+                    self.current_piece.y += 1
                 self.tiempo_mov_abajo = 0
         else:
-            self.tiempo_mov_abajo = 40
+            self.tiempo_mov_abajo = INTERVALO_REPETICION_ABAJO
 
     def run(self):
         while True:
@@ -463,7 +463,6 @@ class TetrisGame:
 
             elif self.state == "GAME":
                 if not self.game_over:
-                    # Aplicar la función de escaneo continuo de las flechas (Laterales y Abajo)
                     self.manejar_entradas_juego(dt)
                     
                     self.fall_time += dt
@@ -494,11 +493,22 @@ class TetrisGame:
                     if event.type == pygame.KEYDOWN:
                         if self.game_over and event.key == pygame.K_m: self.state = "MENU"
                         if not self.game_over:
-                            # MODIFICADO: Rotación confinada ESTRICTAMENTE al evento discreto KEYDOWN (no se puede mantener presionada)
+                            # --- MODIFICADO: Sistema de Rotación inteligente (Wall Kick) en evento discreto ---
                             if event.key == pygame.K_UP:
-                                old = self.current_piece.shape; self.current_piece.rotate()
-                                if not self.board.is_valid_move(self.current_piece, 0, 0): self.current_piece.shape = old
-                            # Caída instantánea dura (Espacio) e intercambio (C) se mantienen por pulsaciones individuales
+                                old_shape = self.current_piece.shape
+                                self.current_piece.rotate()
+                                # 1. Intento de rotación estándar en el lugar
+                                if not self.board.is_valid_move(self.current_piece, 0, 0):
+                                    # 2. Wall Kick: Intenta patear un bloque a la izquierda
+                                    if self.board.is_valid_move(self.current_piece, -1, 0):
+                                        self.current_piece.x -= 1
+                                    # 3. Wall Kick: Intenta patear un bloque a la derecha
+                                    elif self.board.is_valid_move(self.current_piece, 1, 0):
+                                        self.current_piece.x += 1
+                                    # 4. Si no encaja en ningún lado, revierte la rotación
+                                    else:
+                                        self.current_piece.shape = old_shape
+                                        
                             if event.key == pygame.K_SPACE:
                                 drop = 0
                                 while self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1; drop += 1
