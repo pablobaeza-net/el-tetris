@@ -1,177 +1,588 @@
 import pygame
+import random
 import sys
+import json
 import os
-from logica import LogicaTetris
-from vista2 import VistaTetris       # Mantenemos "vista2" porque te funcionó perfecto
-from persistance import PersistenciaTetris 
+from persistance import PersistenciaTetris
+from collections import deque
 
-class JuegoTetris:
+# ==========================================
+# 1. CONFIGURACIÓN Y CONSTANTES
+# ==========================================
+SCREEN_WIDTH, SCREEN_HEIGHT = 400, 600
+BLOCK_SIZE = 30
+GRID_WIDTH, GRID_HEIGHT = 10, 20
+UI_WIDTH = 250
+
+COLORS = [
+    (20, 20, 20), (0, 240, 240), (240, 240, 0), (160, 0, 240),
+    (0, 240, 0), (240, 0, 0), (0, 0, 240), (240, 160, 0)
+]
+
+# Matrices geométricas completas de los 7 bloques oficiales del juego
+SHAPES = [
+    [[]],  # Indexación base 1
+    [[0,0,0,0], [1,1,1,1], [0,0,0,0], [0,0,0,0]],  # I
+    [[1,1], [1,1]],                                # O
+    [[0,1,0], [1,1,1], [0,0,0]],                   # T
+    [[1,1,0], [0,1,1], [0,0,0]],                   # Z
+    [[0,1,1], [1,1,0], [0,0,0]],                   # S
+    [[1,0,0], [1,1,1], [0,0,0]],                   # J
+    [[0,0,1], [1,1,1], [0,0,0]]                    # L
+]
+
+# --- RUTA PARA ALMACENAMIENTO PERSISTENTE ---
+CARPETA_DATOS = "datos_guardados"
+if not os.path.exists(CARPETA_DATOS):
+    os.makedirs(CARPETA_DATOS)
+
+# ==========================================
+# 2. MODELO DE DATOS
+# ==========================================
+class Tetrimino:
+    def __init__(self, x, y, shape_idx):
+        self.x = x
+        self.y = y
+        self.type = shape_idx
+        self.shape = [list(row) for row in SHAPES[self.type]]
+        self.color = COLORS[self.type]
+
+    def rotate(self):
+        self.shape = [list(row) for row in zip(*self.shape[::-1])]
+
+class Board:
+    def __init__(self):
+        self.grid = [[0 for _ in range(GRID_WIDTH)] for _ in range(GRID_HEIGHT)]
+        self.intervalo_caida = 600  
+        self.tiempo_acumulado_velocidad = 0  
+
+    def is_valid_move(self, piece, adj_x, adj_y, new_shape=None):
+        shape = new_shape or piece.shape
+        for r, row in enumerate(shape):
+            for c, val in enumerate(row):
+                if val:
+                    nx, ny = piece.x + c + adj_x, piece.y + r + adj_y
+                    if nx < 0 or nx >= GRID_WIDTH or ny >= GRID_HEIGHT:
+                        return False
+                    if ny >= 0 and self.grid[ny][nx]:
+                        return False
+        return True
+
+    def lock_piece(self, piece):
+        for r, row in enumerate(piece.shape):
+            for c, val in enumerate(row):
+                if val and piece.y + r >= 0:
+                    self.grid[piece.y + r][piece.x + c] = piece.type
+        return self.clear_lines()
+
+    def clear_lines(self):
+        new_grid = [row for row in self.grid if any(v == 0 for v in row)]
+        lines = GRID_HEIGHT - len(new_grid)
+        for _ in range(lines): new_grid.insert(0, [0 for _ in range(GRID_WIDTH)])
+        self.grid = new_grid
+        return lines
+
+# ==========================================
+# 3. MOTOR PRINCIPAL DEL JUEGO
+# ==========================================
+class TetrisGame:
     def __init__(self):
         pygame.init()
-        # Inicializar el mezclador de audio de Pygame
-        pygame.mixer.init() 
+        self.screen = pygame.display.set_mode((SCREEN_WIDTH + UI_WIDTH, SCREEN_HEIGHT))
+        pygame.display.set_caption("Tetris Pro - Persistent Edition")
+        self.clock = pygame.time.Clock()
+        self.font_title = pygame.font.SysFont("Consolas", 45, bold=True)
+        self.font_ui = pygame.font.SysFont("Consolas", 22, bold=True)
+        self.font_sm = pygame.font.SysFont("Consolas", 14, bold=True)
         
-        pygame.key.set_repeat(200, 50) 
+        self.state = "MENU"
+        self.player_nick = ""
+        self.storage = PersistenciaTetris()
+        self.usuarios = self.load_users()
         
-        self.logica = LogicaTetris()
-        self.vista = VistaTetris()
-        self.persistencia = PersistenciaTetris()
-        self.estado = "menu"
-        self.drop_time = 0
-        self.drop_speed = 800
-        self.seleccion_menu = 0
-        self.seleccion_gameover = 0
-        self.nombre_jugador = ""
-        self.input_activo = False
+        self.menu_options = ["JUGAR", "PRACTICA", "SALIR"]
+        self.selected_idx = 0
+        self.modo_practica_activo = False 
+        
+        self.bag = []
+        self.auth_order = ["Alias", "Nombre", "Apellido", "Institucion"]
+        self.categories = ["Junior", "Senior", "Profesor"]
+        
+        # Temporizadores internos para el movimiento continuo fluido manual
+        self.tiempo_mov_lateral = 0
+        self.tiempo_mov_abajo = 0
+        
+        self.limpiar_formulario()
+        self.reset_game()
 
-        # Lógica para cargar y reproducir la música de forma segura (usando os.path)
+    def load_scores(self):
+        # Deprecated: scores ahora se guardan solo en archivos por jugador
+        pass
+
+    def load_users(self):
+        # Carga todos los archivos .json dentro de datos_guardados y
+        # construye el mapeo alias -> {nombre, apellido, institucion, categoria}
+        users = {}
+        if os.path.exists(CARPETA_DATOS):
+            for fname in os.listdir(CARPETA_DATOS):
+                if not fname.lower().endswith('.json'): continue
+                path = os.path.join(CARPETA_DATOS, fname)
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    # Sólo consideramos archivos que contienen la clave 'alias'
+                    if 'alias' not in data: continue
+                    alias = data.get('alias')
+                    nombre_real = data.get('nombre_real', '')
+                    # separar nombre y apellido para mantener la UI existente
+                    parts = nombre_real.split(' ', 1)
+                    nombre = parts[0] if parts else ''
+                    apellido = parts[1] if len(parts) > 1 else ''
+                    users[alias] = {
+                        'nombre': nombre,
+                        'apellido': apellido,
+                        'institucion': data.get('institucion', ''),
+                        'categoria': data.get('categoria', None)
+                    }
+                except Exception:
+                    continue
+        return users
+
+    def save_score(self):
+        if self.modo_practica_activo: return
+        user = self.usuarios.get(self.player_nick, {})
         try:
-            # Detecta la carpeta donde está este main.py y busca "musi.mp3" ahí
-            carpeta_juego = os.path.dirname(__file__)
-            ruta_musica = os.path.join(carpeta_juego, "musi.mp3")
-            
-            pygame.mixer.music.load(ruta_musica) 
-            pygame.mixer.music.set_volume(0.3)  # Volumen al 30%
-            pygame.mixer.music.play(-1)         # Repetir infinitamente
-        except Exception as e:
-            print(f"⚠️ No se pudo cargar la música. Verifica el nombre del archivo. Error: {e}")
-    
-    def ejecutar(self):
-        reloj = pygame.time.Clock()
-        
-        while True:
-            eventos = pygame.event.get()
-            for event in eventos:
-                if event.type == pygame.QUIT:
-                    pygame.quit()
-                    sys.exit()
-            
-            highscores = self.persistencia.top_10()
-            
-            if self.estado == "menu":
-                self.manejar_menu(eventos, highscores)
-            elif self.estado == "highscores":
-                self.manejar_highscores(eventos)
-            elif self.estado == "juego":
-                self.actualizar_juego(eventos)
-            elif self.estado == "gameover":
-                self.manejar_gameover(eventos)
-            
-            reloj.tick(60)
-    
-    def manejar_menu(self, eventos, highscores):
-        for event in eventos:
-            if event.type == pygame.KEYDOWN:
-                # Navegación con flechas
-                if event.key == pygame.K_UP and self.seleccion_menu > 0:
-                    self.seleccion_menu -= 1
-                elif event.key == pygame.K_DOWN and self.seleccion_menu < 2:
-                    self.seleccion_menu += 1
-                
-                # Seleccionar con Enter
-                elif event.key == pygame.K_RETURN:
-                    if self.seleccion_menu == 0: 
-                        self.reiniciar() # Limpia el tablero al empezar
-                        self.estado = "juego"
-                    elif self.seleccion_menu == 1: 
-                        self.estado = "highscores"
-                    elif self.seleccion_menu == 2: 
-                        pygame.quit()
-                        sys.exit()
+            # Guardar el puntaje en el JSON individual del jugador
+            self.storage.guardar_puntaje(self.player_nick, f"{user.get('nombre','')} {user.get('apellido','')}", user.get('institucion',''), self.score)
+        except FileNotFoundError:
+            # Si no está registrado, no guardamos puntaje
+            pass
 
-                # Atajos con teclas numéricas (1, 2, 3)
-                elif event.key == pygame.K_1 or event.key == pygame.K_KP1:
-                    self.reiniciar()
-                    self.estado = "juego"
-                elif event.key == pygame.K_2 or event.key == pygame.K_KP2:
-                    self.estado = "highscores"
-                elif event.key == pygame.K_3 or event.key == pygame.K_KP3:
-                    pygame.quit()
-                    sys.exit()
-                    
-        # Pasamos la selección a la vista para que el botón "brille"
-        self.vista.dibujar_menu(highscores, self.seleccion_menu)
-    
-    def manejar_highscores(self, eventos):
-        for event in eventos:
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_ESCAPE or event.key == pygame.K_RETURN:
-                    self.estado = "menu"
-        highscores = self.persistencia.top_10()
-        self.vista.dibujar_highscores(highscores)
-    
-    def actualizar_juego(self, eventos):
-        for event in eventos:
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_LEFT: self.logica.mover(-1, 0)
-                elif event.key == pygame.K_RIGHT: self.logica.mover(1, 0)
-                elif event.key == pygame.K_DOWN: self.logica.bajar()
-                elif event.key == pygame.K_UP: self.logica.rotar()
-                elif event.key == pygame.K_SPACE: 
-                    self.logica.hard_drop()
-                    self.logica.puntos += 2
-                elif event.key == pygame.K_ESCAPE:
-                    self.estado = "menu"
-        
-        now = pygame.time.get_ticks()
-        if now - self.drop_time > self.drop_speed:
-            game_over = self.logica.bajar()
-            self.drop_time = now
-            if game_over:
-                self.estado = "gameover"
-                self.seleccion_gameover = 0 # Reset del selector
-        
-        self.vista.dibujar_tablero(
-            self.logica.tablero, self.logica.pieza,
-            self.logica.x, self.logica.y, self.logica.puntos
-        )
-    
-    def manejar_gameover(self, eventos):
-        if not self.input_activo:
-            for event in eventos:
-                if event.type == pygame.KEYDOWN:
-                    if event.key == pygame.K_UP and self.seleccion_gameover > 0:
-                        self.seleccion_gameover -= 1
-                    elif event.key == pygame.K_DOWN and self.seleccion_gameover < 1:
-                        self.seleccion_gameover += 1
-                    elif event.key == pygame.K_RETURN:
-                        if self.seleccion_gameover == 0:
-                            self.input_activo = True
-                        else:
-                            self.estado = "menu"
-                            
-            self.vista.dibujar_gameover(self.logica.puntos, self.seleccion_gameover)
+    def limpiar_formulario(self):
+        self.auth_fields = {"Alias": "", "Nombre": "", "Apellido": "", "Institucion": ""}
+        self.active_field_idx = 0
+        self.selected_cat_idx = 0
+        self.login_alias = ""
+        self.is_login_active = False
+        self.auth_error = ""
+
+    def get_random_piece_idx(self):
+        if not self.bag:
+            self.bag = list(range(1, len(SHAPES)))
+            random.shuffle(self.bag)
+        return self.bag.pop()
+
+    def reset_game(self):
+        self.board = Board()
+        self.bag = []
+        self.queue = deque([Tetrimino(3, -1, self.get_random_piece_idx()) for _ in range(4)])
+        self.current_piece = self.queue.popleft()
+        self.hold_piece = None
+        self.can_hold = True
+        self.score = 0
+        self.game_over = False
+        self.fall_time = 0
+        self.tiempo_mov_lateral = 0
+        self.tiempo_mov_abajo = 0
+
+    def handle_hold(self):
+        if not self.modo_practica_activo:
+            user_info = self.usuarios.get(self.player_nick, {})
+            if (user_info.get("categoria") or "").upper() != "JUNIOR": return
+            
+        if not self.can_hold: return
+        if self.hold_piece is None:
+            self.hold_piece = Tetrimino(3, -1, self.current_piece.type)
+            self.current_piece = self.queue.popleft()
+            self.queue.append(Tetrimino(3, -1, self.get_random_piece_idx()))
         else:
-            self.manejar_input_nombre(eventos)
-    
-    def manejar_input_nombre(self, eventos):
-        now = pygame.time.get_ticks()
-        cursor = "_" if now % 1000 < 500 else ""
-        nombre_display = self.nombre_jugador + cursor
-        
-        for event in eventos:
-            if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_BACKSPACE:
-                    self.nombre_jugador = self.nombre_jugador[:-1]
-                elif event.key == pygame.K_RETURN and len(self.nombre_jugador) >= 1:
-                    # Al presionar enter guarda y vuelve al menú principal
-                    self.persistencia.guardar_puntaje(self.nombre_jugador.upper(), self.logica.puntos)
-                    print(f"✅ Guardado: {self.nombre_jugador} - {self.logica.puntos}")
-                    self.estado = "menu"
-                    self.input_activo = False
-                    self.nombre_jugador = ""
-                else:
-                    # Añade las letras al nombre si es alfanumérico y no excede 10 caracteres
-                    if len(self.nombre_jugador) < 10 and event.unicode.isalnum():
-                        self.nombre_jugador += event.unicode.upper()
+            temp_type = self.current_piece.type
+            self.current_piece = Tetrimino(3, -1, self.hold_piece.type)
+            self.hold_piece = Tetrimino(3, -1, temp_type)
+        self.can_hold = False
 
-        self.vista.dibujar_gameover_input(self.logica.puntos, nombre_display)
-    
-    def reiniciar(self):
-        self.logica = LogicaTetris()
-        self.drop_time = pygame.time.get_ticks()
-        self.estado = "juego"
+    def draw_text_centered(self, text, y, font, color=(255, 255, 255)):
+        surf = font.render(text, True, color)
+        rect = surf.get_rect(center=((SCREEN_WIDTH + UI_WIDTH) // 2, y))
+        self.screen.blit(surf, rect)
+
+    def draw_menu(self):
+        self.screen.fill((10, 10, 15))
+        self.draw_text_centered("TETRIS", 100, self.font_title, (0, 255, 200))
+        
+        mouse_pos = pygame.mouse.get_pos()
+        for i, opt in enumerate(self.menu_options):
+            y = 250 + (i * 60)
+            rect = pygame.Rect(0, 0, 200, 40)
+            rect.center = ((SCREEN_WIDTH + UI_WIDTH) // 2, y)
+            if rect.collidepoint(mouse_pos): self.selected_idx = i
+            
+            color = (0, 255, 100) if self.selected_idx == i else (150, 150, 150)
+            self.draw_text_centered(opt, y, self.font_ui, color)
+        pygame.display.flip()
+
+    def draw_auth_screen(self):
+        self.screen.fill((15, 15, 25))
+        mid_x = (SCREEN_WIDTH + UI_WIDTH) // 2
+        self.draw_text_centered("REGISTRO DE NUEVO JUGADOR", 40, self.font_ui, (0, 255, 200))
+        
+        y_offset = 90
+        self.rects_campos = {}
+        for i, f_name in enumerate(self.auth_order):
+            lbl = self.font_sm.render(f"{f_name}:", True, (180, 180, 180))
+            self.screen.blit(lbl, (mid_x - 220, y_offset + 5))
+            
+            box_rect = pygame.Rect(mid_x - 80, y_offset, 280, 30)
+            self.rects_campos[f_name] = box_rect
+            
+            is_active = (self.active_field_idx == i and not self.is_login_active)
+            b_color = (0, 255, 100) if is_active else (80, 80, 80)
+            pygame.draw.rect(self.screen, b_color, box_rect, 2)
+            
+            val_txt = self.font_sm.render(self.auth_fields[f_name], True, (255, 255, 255))
+            self.screen.blit(val_txt, (mid_x - 73, y_offset + 5))
+            y_offset += 45
+            
+        lbl_cat = self.font_sm.render("Categoría:", True, (180, 180, 180))
+        self.screen.blit(lbl_cat, (mid_x - 220, y_offset + 5))
+        
+        self.rects_categorias = []
+        for i, cat in enumerate(self.categories):
+            cat_rect = pygame.Rect(mid_x - 80 + (i * 95), y_offset, 85, 30)
+            self.rects_categorias.append((i, cat_rect))
+            bg_color = (0, 120, 200) if self.selected_cat_idx == i else (40, 40, 50)
+            pygame.draw.rect(self.screen, bg_color, cat_rect)
+            pygame.draw.rect(self.screen, (100, 100, 100), cat_rect, 1)
+            
+            cat_txt = self.font_sm.render(cat, True, (255, 255, 255))
+            c_rect = cat_txt.get_rect(center=cat_rect.center)
+            self.screen.blit(cat_txt, c_rect)
+            
+        y_offset += 50
+        self.btn_registrar = pygame.Rect(mid_x - 150, y_offset, 300, 35)
+        pygame.draw.rect(self.screen, (0, 120, 240), self.btn_registrar)
+        self.draw_text_centered("REGISTRAR Y EMPEZAR", y_offset + 17, self.font_sm, (255, 255, 255))
+        
+        y_offset += 65
+        pygame.draw.line(self.screen, (60, 60, 70), (40, y_offset), (SCREEN_WIDTH + UI_WIDTH - 40, y_offset), 2)
+        y_offset += 25
+        self.draw_text_centered("INICIAR SESIÓN", y_offset, self.font_ui, (0, 255, 200))
+        
+        y_offset += 40
+        lbl_log = self.font_sm.render("Tu Alias:", True, (180, 180, 180))
+        self.screen.blit(lbl_log, (mid_x - 220, y_offset + 5))
+        
+        self.box_login_rect = pygame.Rect(mid_x - 80, y_offset, 280, 30)
+        b_color_log = (0, 255, 100) if self.is_login_active else (80, 80, 80)
+        pygame.draw.rect(self.screen, b_color_log, self.box_login_rect, 2)
+        
+        log_txt = self.font_sm.render(self.login_alias, True, (255, 255, 255))
+        self.screen.blit(log_txt, (mid_x - 73, y_offset + 5))
+        
+        y_offset += 50
+        self.btn_login = pygame.Rect(mid_x - 150, y_offset, 300, 35)
+        pygame.draw.rect(self.screen, (0, 150, 70), self.btn_login)
+        self.draw_text_centered("INICIAR Y JUGAR", y_offset + 17, self.font_sm, (255, 255, 255))
+        
+        if self.auth_error: self.draw_text_centered(self.auth_error, 565, self.font_sm, (255, 50, 50))
+        pygame.display.flip()
+
+    def draw_game(self):
+        self.screen.fill((15, 15, 20))
+        for y, row in enumerate(self.board.grid):
+            for x, val in enumerate(row):
+                rect = (x * BLOCK_SIZE, y * BLOCK_SIZE, BLOCK_SIZE-1, BLOCK_SIZE-1)
+                pygame.draw.rect(self.screen, COLORS[val] if val else (30, 30, 35), rect, 0 if val else 1)
+
+        if not self.game_over:
+            for r, row in enumerate(self.current_piece.shape):
+                for c, val in enumerate(row):
+                    if val: pygame.draw.rect(self.screen, self.current_piece.color, ((self.current_piece.x+c)*BLOCK_SIZE, (self.current_piece.y+r)*BLOCK_SIZE, BLOCK_SIZE-1, BLOCK_SIZE-1))
+        
+        ux = SCREEN_WIDTH + 20
+        pygame.draw.rect(self.screen, (40, 40, 50), (SCREEN_WIDTH, 0, UI_WIDTH, SCREEN_HEIGHT))
+        
+        if self.modo_practica_activo:
+            nick_display = "INVITADO"
+            categoria_txt = "PRACTICA"
+            nombre_real, apellido_real = "MODO", "PRACTICA"
+            ver_hold = True 
+        else:
+            user_info = self.usuarios.get(self.player_nick, {})
+            nick_display = self.player_nick
+            categoria_txt = (user_info.get("categoria") or "N/A").upper()
+            nombre_real = user_info.get("nombre", "N/A")
+            apellido_real = user_info.get("apellido", "N/A")
+            ver_hold = (categoria_txt == "JUNIOR")
+        
+        self.screen.blit(self.font_ui.render(f"PLAYER: {nick_display}", True, (255, 255, 255)), (ux, 30))
+        self.screen.blit(self.font_sm.render(f"RANK: {categoria_txt}", True, (255, 255, 0)), (ux, 65))
+        self.screen.blit(self.font_ui.render(f"SCORE: {self.score}", True, (0, 255, 100)), (ux, 100))
+        
+        if ver_hold:
+            self.screen.blit(self.font_ui.render("HOLD (C):", True, (150, 150, 150)), (ux, 160))
+            if self.hold_piece:
+                for r, row in enumerate(self.hold_piece.shape):
+                    for c, val in enumerate(row):
+                        if val: pygame.draw.rect(self.screen, self.hold_piece.color, (ux + c*20, 200 + r*20, 18, 18))
+            y_next_label, y_next_pieces = 310, 350
+        else:
+            y_next_label, y_next_pieces = 160, 200
+
+        self.screen.blit(self.font_ui.render("SIGUIENTES:", True, (150, 150, 150)), (ux, y_next_label))
+        for i, p in enumerate(list(self.queue)[:3]):
+            for r, row in enumerate(p.shape):
+                for c, val in enumerate(row):
+                    if val: pygame.draw.rect(self.screen, p.color, (ux + c*20, y_next_pieces + i*70 + r*20, 18, 18))
+
+        y_user_panel = SCREEN_HEIGHT - 45
+        pygame.draw.line(self.screen, (100, 100, 100), (SCREEN_WIDTH + 15, y_user_panel), (SCREEN_WIDTH + UI_WIDTH - 15, y_user_panel), 1)
+        nombre_completo_txt = f"USER: {nombre_real} {apellido_real}"
+        self.screen.blit(self.font_sm.render(nombre_completo_txt, True, (200, 200, 200)), (ux, y_user_panel + 12))
+
+        if self.game_over: self.draw_text_centered("GAME OVER - M: MENU", SCREEN_HEIGHT//2, self.font_ui, (255, 50, 50))
+        pygame.display.flip()
+
+    def process_registration(self):
+        alias = self.auth_fields["Alias"].strip()
+        nombre = self.auth_fields["Nombre"].strip()
+        apellido = self.auth_fields["Apellido"].strip()
+        inst = self.auth_fields["Institucion"].strip()
+        cat = self.categories[self.selected_cat_idx]
+        
+        if not all([alias, nombre, apellido, inst]):
+            self.auth_error = "Todos los campos son obligatorios."
+            return
+        if alias in self.usuarios:
+            self.auth_error = "El alias ya existe. Usa Inicio de Sesion."
+            return
+
+        # Registrar usando la nueva persistencia (se crea un archivo por jugador)
+        try:
+            jugador = self.storage.registro(alias, f"{nombre} {apellido}", inst, categoria=cat)
+        except FileExistsError:
+            self.auth_error = "El alias ya existe. Usa Inicio de Sesion."
+            return
+
+        # Actualizar caché local
+        self.usuarios[alias] = {"nombre": nombre, "apellido": apellido, "institucion": inst, "categoria": cat}
+        self.player_nick = alias
+        self.modo_practica_activo = False
+        self.reset_game()
+        self.state = "GAME"
+        self.auth_error = ""
+
+    def process_login(self):
+        alias = self.login_alias.strip()
+        if not alias:
+            self.auth_error = "Ingresa un alias para iniciar."
+            return
+        if alias in self.usuarios:
+            # Ya tenemos la info en caché
+            self.player_nick = alias
+            self.modo_practica_activo = False
+            self.reset_game()
+            self.state = "GAME"
+            self.auth_error = ""
+            return
+
+        # Intentar cargar desde persistencia (por si no estaba en la caché)
+        # Para login necesitamos conocer nombre_real e institucion para localizar el archivo,
+        # pero dado que el alias es único, buscamos en la carpeta.
+        try:
+            # buscar archivo que contenga el alias como campo
+            found = None
+            for fname in os.listdir(CARPETA_DATOS):
+                if not fname.lower().endswith('.json'): continue
+                path = os.path.join(CARPETA_DATOS, fname)
+                try:
+                    with open(path, 'r', encoding='utf-8') as f:
+                        data = json.load(f)
+                    if data.get('alias') == alias:
+                        found = data
+                        break
+                except Exception:
+                    continue
+            if not found:
+                self.auth_error = "El alias no esta registrado."
+                return
+
+            # Guardar en caché y establecer sesión (separar nombre_real)
+            nombre_real = found.get('nombre_real','')
+            parts = nombre_real.split(' ',1)
+            nombre = parts[0] if parts else ''
+            apellido = parts[1] if len(parts)>1 else ''
+            self.usuarios[alias] = {'nombre': nombre, 'apellido': apellido, 'institucion': found.get('institucion',''), 'categoria': found.get('categoria')}
+            self.player_nick = alias
+            self.modo_practica_activo = False
+            self.reset_game()
+            self.state = "GAME"
+            self.auth_error = ""
+        except Exception:
+            self.auth_error = "El alias no esta registrado."
+
+    def manejar_entradas_juego(self, dt):
+        keys = pygame.key.get_pressed()
+        self.tiempo_mov_lateral += dt
+        self.tiempo_mov_abajo += dt
+
+        INTERVALO_REPETICION_LATERAL = 120  
+        INTERVALO_REPETICION_ABAJO = 55    
+
+        if keys[pygame.K_LEFT]:
+            if self.tiempo_mov_lateral >= INTERVALO_REPETICION_LATERAL:
+                if self.board.is_valid_move(self.current_piece, -1, 0): 
+                    self.current_piece.x -= 1
+                self.tiempo_mov_lateral = 0
+        elif keys[pygame.K_RIGHT]:
+            if self.tiempo_mov_lateral >= INTERVALO_REPETICION_LATERAL:
+                if self.board.is_valid_move(self.current_piece, 1, 0): 
+                    self.current_piece.x += 1
+                self.tiempo_mov_lateral = 0
+        else:
+            self.tiempo_mov_lateral = INTERVALO_REPETICION_LATERAL
+
+        if keys[pygame.K_DOWN]:
+            if self.tiempo_mov_abajo >= INTERVALO_REPETICION_ABAJO:
+                if self.board.is_valid_move(self.current_piece, 0, 1): 
+                    self.current_piece.y += 1
+                self.tiempo_mov_abajo = 0
+        else:
+            self.tiempo_mov_abajo = INTERVALO_REPETICION_ABAJO
+
+    def intentar_rotacion_con_kicks(self):
+        """Intenta rotar la pieza aplicando desplazamientos laterales si choca con bordes o bloques."""
+        temp_piece = Tetrimino(self.current_piece.x, self.current_piece.y, self.current_piece.type)
+        temp_piece.shape = [list(row) for row in self.current_piece.shape]
+        temp_piece.rotate()
+
+        # Lista de intentos de compensación horizontal (Wall Kicks)
+        pruebas_desplazamiento = [0, -1, 1, -2, 2]
+
+        for offset in pruebas_desplazamiento:
+            if self.board.is_valid_move(temp_piece, offset, 0):
+                self.current_piece.rotate()
+                self.current_piece.x += offset
+                return True
+        return False
+
+    def run(self):
+        while True:
+            dt = self.clock.get_rawtime()
+            self.clock.tick()
+            
+            if self.state == "MENU":
+                self.draw_menu()
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_UP: self.selected_idx = (self.selected_idx - 1) % 3
+                        if event.key == pygame.K_DOWN: self.selected_idx = (self.selected_idx + 1) % 3
+                        if event.key == pygame.K_RETURN:
+                            if self.selected_idx == 0: 
+                                self.limpiar_formulario()
+                                self.state = "AUTH_MENU"
+                            elif self.selected_idx == 1:
+                                self.modo_practica_activo = True
+                                self.reset_game()
+                                self.state = "GAME"
+                            else: 
+                                pygame.quit(); sys.exit()
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        if self.selected_idx == 0: self.limpiar_formulario(); self.state = "AUTH_MENU"
+                        elif self.selected_idx == 1:
+                            self.modo_practica_activo = True
+                            self.reset_game()
+                            self.state = "GAME"
+                        else: pygame.quit(); sys.exit()
+
+            elif self.state == "AUTH_MENU":
+                self.draw_auth_screen()
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+                    if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                        m_pos = pygame.mouse.get_pos()
+                        for idx, f_name in enumerate(self.auth_order):
+                            if self.rects_campos[f_name].collidepoint(m_pos): self.active_field_idx = idx; self.is_login_active = False
+                        for idx, rcat in self.rects_categorias:
+                            if rcat.collidepoint(m_pos): self.selected_cat_idx = idx
+                        if self.box_login_rect.collidepoint(m_pos): self.is_login_active = True
+                        if self.btn_registrar.collidepoint(m_pos): self.process_registration()
+                        if self.btn_login.collidepoint(m_pos): self.process_login()
+                            
+                    if event.type == pygame.KEYDOWN:
+                        if event.key == pygame.K_ESCAPE: self.state = "MENU"
+                        elif event.key == pygame.K_UP:
+                            if self.is_login_active: self.is_login_active = False; self.active_field_idx = len(self.auth_order) - 1
+                            elif self.active_field_idx > 0: self.active_field_idx -= 1
+                        elif event.key == pygame.K_DOWN:
+                            if not self.is_login_active:
+                                if self.active_field_idx < len(self.auth_order) - 1: self.active_field_idx += 1
+                                else: self.is_login_active = True
+                        elif event.key == pygame.K_TAB:
+                            if not self.is_login_active: self.active_field_idx = (self.active_field_idx + 1) % len(self.auth_order)
+                        elif event.key == pygame.K_BACKSPACE:
+                            if self.is_login_active: self.login_alias = self.login_alias[:-1]
+                            else: self.auth_fields[self.auth_order[self.active_field_idx]] = self.auth_fields[self.auth_order[self.active_field_idx]][:-1]
+                        elif event.key == pygame.K_RETURN:
+                            if self.is_login_active: self.process_login()
+                            else:
+                                if self.active_field_idx < len(self.auth_order) - 1: self.active_field_idx += 1
+                                else: self.process_registration()
+                        else:
+                            char = event.unicode
+                            if char:
+                                if self.is_login_active:
+                                    if char != " " and len(self.login_alias) < 25: self.login_alias += char
+                                else:
+                                    active_fn = self.auth_order[self.active_field_idx]
+                                    if active_fn == "Alias" and char != " " and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
+                                    elif active_fn in ["Nombre", "Apellido"] and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
+                                    elif active_fn == "Institucion" and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
+
+            elif self.state == "GAME":
+                if not self.game_over:
+                    # Aplicar la función de escaneo continuo de las flechas (Laterales y Abajo)
+                    self.manejar_entradas_juego(dt)
+                    
+                    self.fall_time += dt
+                    self.board.tiempo_acumulado_velocidad += dt
+                    if self.board.tiempo_acumulado_velocidad >= 30000:  
+                        self.board.intervalo_caida = max(80, self.board.intervalo_caida - 35)  
+                        self.board.tiempo_acumulado_velocidad = 0  
+                    
+                    if self.fall_time > self.board.intervalo_caida:
+                        if self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1
+                        else:
+                            lines = self.board.lock_piece(self.current_piece)
+                            score_map = {0: 0, 1: 100, 2: 300, 3: 500, 4: 800}
+                            self.score += score_map[lines] if lines < len(score_map) else 1210
+                            
+                            nueva_pieza_temp = self.queue.popleft()
+                            if not self.board.is_valid_move(nueva_pieza_temp, 0, 0): 
+                                self.game_over = True
+                                self.save_score() 
+                            else: 
+                                self.current_piece = nueva_pieza_temp
+                                self.queue.append(Tetrimino(3, -1, self.get_random_piece_idx()))
+                                self.can_hold = True
+                        self.fall_time = 0
+
+                for event in pygame.event.get():
+                    if event.type == pygame.QUIT: pygame.quit(); sys.exit()
+                    if event.type == pygame.KEYDOWN:
+                        if self.game_over and event.key == pygame.K_m: self.state = "MENU"
+                        if not self.game_over:
+                            # MODIFICADO: Lógica de rotación fluida inteligente anticolición (Flecha Arriba)
+                            if event.key == pygame.K_UP:
+                                self.intentar_rotacion_con_kicks()
+                            if event.key == pygame.K_SPACE:
+                                drop = 0
+                                while self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1; drop += 1
+                                self.score += (drop * 2)
+                            if event.key == pygame.K_c: self.handle_hold()
+                self.draw_game()
 
 if __name__ == "__main__":
-    juego = JuegoTetris()
-    juego.ejecutar()
+    game = TetrisGame()
+    game.run()
