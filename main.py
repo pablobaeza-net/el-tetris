@@ -36,12 +36,6 @@ CARPETA_DATOS = "datos_guardados"
 if not os.path.exists(CARPETA_DATOS):
     os.makedirs(CARPETA_DATOS)
 
-# NOTE: ahora la persistencia principal es por jugador (un .json por jugador)
-# RUTA_JUGADORES y RUTA_SCORES quedan para compatibilidad histórica pero
-# ya no se usan para registrar jugadores individuales.
-RUTA_JUGADORES = os.path.join(CARPETA_DATOS, "jugadores.json")
-RUTA_SCORES = os.path.join(CARPETA_DATOS, "scores.json")
-
 # ==========================================
 # 2. MODELO DE DATOS
 # ==========================================
@@ -103,7 +97,6 @@ class TetrisGame:
         self.player_nick = ""
         self.storage = PersistenciaTetris()
         self.usuarios = self.load_users()
-        self.high_scores = self.load_scores()
         
         self.menu_options = ["JUGAR", "PRACTICA", "SALIR"]
         self.selected_idx = 0
@@ -121,9 +114,8 @@ class TetrisGame:
         self.reset_game()
 
     def load_scores(self):
-        if os.path.exists(RUTA_SCORES):
-            with open(RUTA_SCORES, "r", encoding="utf-8") as f: return json.load(f)
-        return {"Junior": {}, "Senior": {}, "Profesor": {}}
+        # Deprecated: scores ahora se guardan solo en archivos por jugador
+        pass
 
     def load_users(self):
         # Carga todos los archivos .json dentro de datos_guardados y
@@ -157,22 +149,12 @@ class TetrisGame:
     def save_score(self):
         if self.modo_practica_activo: return
         user = self.usuarios.get(self.player_nick, {})
-        cat = user.get("categoria") or "Junior"
         try:
-            # Actualiza el high_score en el JSON individual del jugador
-            updated = self.storage.guardar_puntaje(self.player_nick, f"{user.get('nombre','')} {user.get('apellido','')}", user.get('institucion',''), self.score)
-            # Mantener una representación local del ranking (opcional)
-            if updated:
-                if cat not in self.high_scores: self.high_scores[cat] = {}
-                self.high_scores[cat][self.player_nick] = self.score
-                with open(RUTA_SCORES, "w", encoding="utf-8") as f: json.dump(self.high_scores, f, indent=4)
+            # Guardar el puntaje en el JSON individual del jugador
+            self.storage.guardar_puntaje(self.player_nick, f"{user.get('nombre','')} {user.get('apellido','')}", user.get('institucion',''), self.score)
         except FileNotFoundError:
             # Si no está registrado, no guardamos puntaje
             pass
-
-    def save_users(self):
-        if self.modo_practica_activo: return
-        with open(RUTA_JUGADORES, "w", encoding="utf-8") as f: json.dump(self.usuarios, f, indent=4)
 
     def limpiar_formulario(self):
         self.auth_fields = {"Alias": "", "Nombre": "", "Apellido": "", "Institucion": ""}
