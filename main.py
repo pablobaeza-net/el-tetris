@@ -18,7 +18,7 @@ COLORS = [
     (0, 240, 0), (240, 0, 0), (0, 0, 240), (240, 160, 0)
 ]
 
-# CORREGIDO: Estructura sintáctica válida para las 7 piezas del juego
+# Definición geométrica completa de los 7 bloques sin errores de sintaxis
 SHAPES = [
     [[]],  # Indexación base 1
     [[1, 1, 1, 1]],  # I
@@ -29,6 +29,14 @@ SHAPES = [
     [[1, 0, 0], [1, 1, 1]],  # J
     [[0, 0, 1], [1, 1, 1]]   # L
 ]
+
+# --- RUTA PARA ALMACENAMIENTO PERSISTENTE ---
+CARPETA_DATOS = "datos_guardados"
+if not os.path.exists(CARPETA_DATOS):
+    os.makedirs(CARPETA_DATOS)
+
+RUTA_JUGADORES = os.path.join(CARPETA_DATOS, "jugadores.json")
+RUTA_SCORES = os.path.join(CARPETA_DATOS, "scores.json")
 
 # ==========================================
 # 2. MODELO DE DATOS
@@ -91,43 +99,44 @@ class TetrisGame:
         self.player_nick = ""
         self.usuarios = self.load_users()
         self.high_scores = self.load_scores()
-        self.menu_options = ["JUGAR", "PUNTAJES", "SALIR"]
+        
+        # MODIFICADO: Nueva opción "PRACTICA" inyectada en el menú principal
+        self.menu_options = ["JUGAR", "PRACTICA", "SALIR"]
         self.selected_idx = 0
+        self.modo_practica_activo = False # Flag para desactivar persistencia JSON
         
         self.bag = []
-        
         self.auth_order = ["Alias", "Nombre", "Apellido", "Institucion"]
         self.categories = ["Junior", "Senior", "Profesor"]
-        self.scores_category_idx = 0
         self.limpiar_formulario()
         self.reset_game()
 
     def load_scores(self):
-        if os.path.exists("scores.json"):
-            with open("scores.json", "r", encoding="utf-8") as f:
-                return json.load(f)
+        if os.path.exists(RUTA_SCORES):
+            with open(RUTA_SCORES, "r", encoding="utf-8") as f: return json.load(f)
         return {"Junior": {}, "Senior": {}, "Profesor": {}}
 
     def load_users(self):
-        if os.path.exists("jugadores.json"):
-            with open("jugadores.json", "r", encoding="utf-8") as f:
-                return json.load(f)
+        if os.path.exists(RUTA_JUGADORES):
+            with open(RUTA_JUGADORES, "r", encoding="utf-8") as f: return json.load(f)
         return {}
 
     def save_score(self):
-        cat = self.usuarios.get(self.player_nick, {}).get("categoria", "Junior")
-        if cat not in self.high_scores:
-            self.high_scores[cat] = {}
+        # MODIFICADO: Impedir escritura en archivo JSON si es modo práctica
+        if self.modo_practica_activo:
+            return
             
+        cat = self.usuarios.get(self.player_nick, {}).get("categoria", "Junior")
+        if cat not in self.high_scores: self.high_scores[cat] = {}
         old_score = self.high_scores[cat].get(self.player_nick, 0)
         if self.score > old_score:
             self.high_scores[cat][self.player_nick] = self.score
-            with open("scores.json", "w", encoding="utf-8") as f:
-                json.dump(self.high_scores, f, indent=4)
+            with open(RUTA_SCORES, "w", encoding="utf-8") as f: json.dump(self.high_scores, f, indent=4)
 
     def save_users(self):
-        with open("jugadores.json", "w", encoding="utf-8") as f:
-            json.dump(self.usuarios, f, indent=4)
+        if self.modo_practica_activo:
+            return
+        with open(RUTA_JUGADORES, "w", encoding="utf-8") as f: json.dump(self.usuarios, f, indent=4)
 
     def limpiar_formulario(self):
         self.auth_fields = {"Alias": "", "Nombre": "", "Apellido": "", "Institucion": ""}
@@ -155,10 +164,11 @@ class TetrisGame:
         self.fall_time = 0
 
     def handle_hold(self):
-        user_info = self.usuarios.get(self.player_nick, {})
-        if user_info.get("categoria", "").upper() != "JUNIOR":
-            return
-
+        # El modo práctica permite HOLD de manera predeterminada al no poseer restricciones de categoría
+        if not self.modo_practica_activo:
+            user_info = self.usuarios.get(self.player_nick, {})
+            if user_info.get("categoria", "").upper() != "JUNIOR": return
+            
         if not self.can_hold: return
         if self.hold_piece is None:
             self.hold_piece = Tetrimino(3, 0, self.current_piece.type)
@@ -193,7 +203,6 @@ class TetrisGame:
     def draw_auth_screen(self):
         self.screen.fill((15, 15, 25))
         mid_x = (SCREEN_WIDTH + UI_WIDTH) // 2
-        
         self.draw_text_centered("REGISTRO DE NUEVO JUGADOR", 40, self.font_ui, (0, 255, 200))
         
         y_offset = 90
@@ -235,7 +244,6 @@ class TetrisGame:
         
         y_offset += 65
         pygame.draw.line(self.screen, (60, 60, 70), (40, y_offset), (SCREEN_WIDTH + UI_WIDTH - 40, y_offset), 2)
-        
         y_offset += 25
         self.draw_text_centered("INICIAR SESIÓN", y_offset, self.font_ui, (0, 255, 200))
         
@@ -255,43 +263,7 @@ class TetrisGame:
         pygame.draw.rect(self.screen, (0, 150, 70), self.btn_login)
         self.draw_text_centered("INICIAR Y JUGAR", y_offset + 17, self.font_sm, (255, 255, 255))
         
-        if self.auth_error:
-            self.draw_text_centered(self.auth_error, 565, self.font_sm, (255, 50, 50))
-            
-        pygame.display.flip()
-
-    def draw_scores(self):
-        self.screen.fill((10, 10, 20))
-        self.draw_text_centered("TOP PUNTAJES", 40, self.font_title, (255, 215, 0))
-        
-        cat_actual = self.categories[self.scores_category_idx]
-        texto_selector = f"<  {cat_actual.upper()}  >"
-        self.draw_text_centered(texto_selector, 105, self.font_ui, (0, 255, 200))
-        self.draw_text_centered("Usa Flechas [Izquierda / Derecha] para cambiar", 135, self.font_sm, (120, 120, 120))
-        
-        cat_scores = self.high_scores.get(cat_actual, {})
-        
-        scores_filtrados = {}
-        for nick, pto in cat_scores.items():
-            if nick in self.usuarios and self.usuarios[nick].get("categoria") == cat_actual:
-                scores_filtrados[nick] = pto
-
-        sorted_scores = sorted(scores_filtrados.items(), key=lambda x: x[1], reverse=True)[:10]
-        
-        y_pos = 190
-        for i in range(10):
-            if i < len(sorted_scores):
-                nick, score = sorted_scores[i]
-                txt = f"{i+1:2d}. {nick[:12]:<12} - {score:,} pts"
-                color_linea = (255, 255, 255) if i > 0 else (255, 215, 0)
-            else:
-                txt = f"{i+1:2d}. ----         - 0 pts"
-                color_linea = (80, 80, 90)
-                
-            self.draw_text_centered(txt, y_pos, self.font_ui, color_linea)
-            y_pos += 33
-
-        self.draw_text_centered("ESC para volver al menú", 550, self.font_sm, (100, 100, 100))
+        if self.auth_error: self.draw_text_centered(self.auth_error, 565, self.font_sm, (255, 50, 50))
         pygame.display.flip()
 
     def draw_game(self):
@@ -304,33 +276,38 @@ class TetrisGame:
         if not self.game_over:
             for r, row in enumerate(self.current_piece.shape):
                 for c, val in enumerate(row):
-                    if val:
-                        pygame.draw.rect(self.screen, self.current_piece.color, 
-                                         ((self.current_piece.x+c)*BLOCK_SIZE, (self.current_piece.y+r)*BLOCK_SIZE, BLOCK_SIZE-1, BLOCK_SIZE-1))
+                    if val: pygame.draw.rect(self.screen, self.current_piece.color, ((self.current_piece.x+c)*BLOCK_SIZE, (self.current_piece.y+r)*BLOCK_SIZE, BLOCK_SIZE-1, BLOCK_SIZE-1))
         
         ux = SCREEN_WIDTH + 20
         pygame.draw.rect(self.screen, (40, 40, 50), (SCREEN_WIDTH, 0, UI_WIDTH, SCREEN_HEIGHT))
         
-        user_info = self.usuarios.get(self.player_nick, {})
-        categoria_txt = user_info.get("categoria", "N/A").upper()
-        nombre_real = user_info.get("nombre", "N/A")
-        apellido_real = user_info.get("apellido", "N/A")
-
-        self.screen.blit(self.font_ui.render(f"PLAYER: {self.player_nick}", True, (255, 255, 255)), (ux, 30))
+        # MODIFICADO: Renderizado condicional adaptado para el modo práctica aislado
+        if self.modo_practica_activo:
+            nick_display = "INVITADO"
+            categoria_txt = "PRACTICA"
+            nombre_real, apellido_real = "MODO", "PRACTICA"
+            ver_hold = True # El modo práctica incluye el panel de HOLD
+        else:
+            user_info = self.usuarios.get(self.player_nick, {})
+            nick_display = self.player_nick
+            categoria_txt = user_info.get("categoria", "N/A").upper()
+            nombre_real = user_info.get("nombre", "N/A")
+            apellido_real = user_info.get("apellido", "N/A")
+            ver_hold = (categoria_txt == "JUNIOR")
+        
+        self.screen.blit(self.font_ui.render(f"PLAYER: {nick_display}", True, (255, 255, 255)), (ux, 30))
         self.screen.blit(self.font_sm.render(f"RANK: {categoria_txt}", True, (255, 255, 0)), (ux, 65))
         self.screen.blit(self.font_ui.render(f"SCORE: {self.score}", True, (0, 255, 100)), (ux, 100))
         
-        if categoria_txt == "JUNIOR":
+        if ver_hold:
             self.screen.blit(self.font_ui.render("HOLD (C):", True, (150, 150, 150)), (ux, 160))
             if self.hold_piece:
                 for r, row in enumerate(self.hold_piece.shape):
                     for c, val in enumerate(row):
                         if val: pygame.draw.rect(self.screen, self.hold_piece.color, (ux + c*20, 200 + r*20, 18, 18))
-            y_next_label = 310
-            y_next_pieces = 350
+            y_next_label, y_next_pieces = 310, 350
         else:
-            y_next_label = 160
-            y_next_pieces = 200
+            y_next_label, y_next_pieces = 160, 200
 
         self.screen.blit(self.font_ui.render("SIGUIENTES:", True, (150, 150, 150)), (ux, y_next_label))
         for i, p in enumerate(list(self.queue)[:3]):
@@ -340,17 +317,14 @@ class TetrisGame:
 
         y_user_panel = SCREEN_HEIGHT - 45
         pygame.draw.line(self.screen, (100, 100, 100), (SCREEN_WIDTH + 15, y_user_panel), (SCREEN_WIDTH + UI_WIDTH - 15, y_user_panel), 1)
-        
         nombre_completo_txt = f"USER: {nombre_real} {apellido_real}"
         self.screen.blit(self.font_sm.render(nombre_completo_txt, True, (200, 200, 200)), (ux, y_user_panel + 12))
 
-        if self.game_over:
-            self.draw_text_centered("GAME OVER - M: MENU", SCREEN_HEIGHT//2, self.font_ui, (255, 50, 50))
-
+        if self.game_over: self.draw_text_centered("GAME OVER - M: MENU", SCREEN_HEIGHT//2, self.font_ui, (255, 50, 50))
         pygame.display.flip()
 
     def process_registration(self):
-        alias = self.auth_fields["Alias"].strip().upper()
+        alias = self.auth_fields["Alias"].strip()
         nombre = self.auth_fields["Nombre"].strip()
         apellido = self.auth_fields["Apellido"].strip()
         inst = self.auth_fields["Institucion"].strip()
@@ -359,7 +333,6 @@ class TetrisGame:
         if not all([alias, nombre, apellido, inst]):
             self.auth_error = "Todos los campos son obligatorios."
             return
-            
         if alias in self.usuarios:
             self.auth_error = "El alias ya existe. Usa Inicio de Sesion."
             return
@@ -367,18 +340,19 @@ class TetrisGame:
         self.usuarios[alias] = {"nombre": nombre, "apellido": apellido, "institucion": inst, "categoria": cat}
         self.save_users()
         self.player_nick = alias
+        self.modo_practica_activo = False
         self.reset_game()
         self.state = "GAME"
         self.auth_error = ""
 
     def process_login(self):
-        alias = self.login_alias.strip().upper()
+        alias = self.login_alias.strip()
         if not alias:
             self.auth_error = "Ingresa un alias para iniciar."
             return
-            
         if alias in self.usuarios:
             self.player_nick = alias
+            self.modo_practica_activo = False
             self.reset_game()
             self.state = "GAME"
             self.auth_error = ""
@@ -391,6 +365,7 @@ class TetrisGame:
             self.clock.tick()
             
             if self.state == "MENU":
+                pygame.key.set_repeat(0, 0)  
                 self.draw_menu()
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT: pygame.quit(); sys.exit()
@@ -401,109 +376,68 @@ class TetrisGame:
                             if self.selected_idx == 0: 
                                 self.limpiar_formulario()
                                 self.state = "AUTH_MENU"
-                            elif self.selected_idx == 1: 
-                                self.high_scores = self.load_scores()
-                                self.scores_category_idx = 0
-                                self.state = "SCORES"
-                            else: pygame.quit(); sys.exit()
+                            elif self.selected_idx == 1:
+                                # MODIFICADO: Lanzar directamente la partida libre en Modo Práctica
+                                self.modo_practica_activo = True
+                                self.reset_game()
+                                self.state = "GAME"
+                            else: 
+                                pygame.quit(); sys.exit()
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
-                        if self.selected_idx == 0: 
-                            self.limpiar_formulario()
-                            self.state = "AUTH_MENU"
-                        elif self.selected_idx == 1: 
-                            self.high_scores = self.load_scores()
-                            self.scores_category_idx = 0
-                            self.state = "SCORES"
+                        if self.selected_idx == 0: self.limpiar_formulario(); self.state = "AUTH_MENU"
+                        elif self.selected_idx == 1:
+                            self.modo_practica_activo = True
+                            self.reset_game()
+                            self.state = "GAME"
                         else: pygame.quit(); sys.exit()
 
             elif self.state == "AUTH_MENU":
+                pygame.key.set_repeat(0, 0)
                 self.draw_auth_screen()
                 for event in pygame.event.get():
                     if event.type == pygame.QUIT: pygame.quit(); sys.exit()
                     if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                         m_pos = pygame.mouse.get_pos()
-                        
                         for idx, f_name in enumerate(self.auth_order):
-                            if self.rects_campos[f_name].collidepoint(m_pos):
-                                self.active_field_idx = idx
-                                self.is_login_active = False
-                                
+                            if self.rects_campos[f_name].collidepoint(m_pos): self.active_field_idx = idx; self.is_login_active = False
                         for idx, rcat in self.rects_categorias:
-                            if rcat.collidepoint(m_pos):
-                                self.selected_cat_idx = idx
-                                
-                        if self.box_login_rect.collidepoint(m_pos):
-                            self.is_login_active = True
-                            
-                        if self.btn_registrar.collidepoint(m_pos):
-                            self.process_registration()
-                        elif self.btn_login.collidepoint(m_pos):
-                            self.process_login()
+                            if rcat.collidepoint(m_pos): self.selected_cat_idx = idx
+                        if self.box_login_rect.collidepoint(m_pos): self.is_login_active = True
+                        if self.btn_registrar.collidepoint(m_pos): self.process_registration()
+                        if self.btn_login.collidepoint(m_pos): self.process_login()
                             
                     if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE:
-                            self.state = "MENU"
+                        if event.key == pygame.K_ESCAPE: self.state = "MENU"
                         elif event.key == pygame.K_UP:
-                            if self.is_login_active:
-                                self.is_login_active = False
-                                self.active_field_idx = len(self.auth_order) - 1
-                            elif self.active_field_idx > 0:
-                                self.active_field_idx -= 1
+                            if self.is_login_active: self.is_login_active = False; self.active_field_idx = len(self.auth_order) - 1
+                            elif self.active_field_idx > 0: self.active_field_idx -= 1
                         elif event.key == pygame.K_DOWN:
                             if not self.is_login_active:
-                                if self.active_field_idx < len(self.auth_order) - 1:
-                                    self.active_field_idx += 1
-                                else:
-                                    self.is_login_active = True
+                                if self.active_field_idx < len(self.auth_order) - 1: self.active_field_idx += 1
+                                else: self.is_login_active = True
                         elif event.key == pygame.K_TAB:
-                            if not self.is_login_active:
-                                self.active_field_idx = (self.active_field_idx + 1) % len(self.auth_order)
+                            if not self.is_login_active: self.active_field_idx = (self.active_field_idx + 1) % len(self.auth_order)
                         elif event.key == pygame.K_BACKSPACE:
-                            if self.is_login_active:
-                                self.login_alias = self.login_alias[:-1]
-                            else:
-                                active_fn = self.auth_order[self.active_field_idx]
-                                self.auth_fields[active_fn] = self.auth_fields[active_fn][:-1]
-                        
+                            if self.is_login_active: self.login_alias = self.login_alias[:-1]
+                            else: self.auth_fields[self.auth_order[self.active_field_idx]] = self.auth_fields[self.auth_order[self.active_field_idx]][:-1]
                         elif event.key == pygame.K_RETURN:
-                            if self.is_login_active: 
-                                self.process_login()
+                            if self.is_login_active: self.process_login()
                             else:
-                                if self.active_field_idx < len(self.auth_order) - 1:
-                                    self.active_field_idx += 1
-                                else:
-                                    self.process_registration()
+                                if self.active_field_idx < len(self.auth_order) - 1: self.active_field_idx += 1
+                                else: self.process_registration()
                         else:
                             char = event.unicode
                             if char:
                                 if self.is_login_active:
-                                    if char.isalpha() and len(self.login_alias) < 10: 
-                                        self.login_alias += char.upper()
+                                    if char != " " and len(self.login_alias) < 10: self.login_alias += char
                                 else:
                                     active_fn = self.auth_order[self.active_field_idx]
-                                    if active_fn == "Alias":
-                                        if char.isalpha() and len(self.auth_fields[active_fn]) < 10:
-                                            self.auth_fields[active_fn] += char.upper()
-                                    elif active_fn in ["Nombre", "Apellido"]:
-                                        if (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 15:
-                                            self.auth_fields[active_fn] += char
-                                    elif active_fn == "Institucion":
-                                        if (char.isalnum() or char in " .-_") and len(self.auth_fields[active_fn]) < 20:
-                                            self.auth_fields[active_fn] += char
-
-            elif self.state == "SCORES":
-                self.draw_scores()
-                for event in pygame.event.get():
-                    if event.type == pygame.QUIT: pygame.quit(); sys.exit()
-                    if event.type == pygame.KEYDOWN:
-                        if event.key == pygame.K_ESCAPE: 
-                            self.state = "MENU"
-                        elif event.key == pygame.K_LEFT:
-                            self.scores_category_idx = (self.scores_category_idx - 1) % len(self.categories)
-                        elif event.key == pygame.K_RIGHT:
-                            self.scores_category_idx = (self.scores_category_idx + 1) % len(self.categories)
+                                    if active_fn == "Alias" and char != " " and len(self.auth_fields[active_fn]) < 10: self.auth_fields[active_fn] += char
+                                    elif active_fn in ["Nombre", "Apellido"] and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 15: self.auth_fields[active_fn] += char
+                                    elif active_fn == "Institucion" and (char.isalpha() or char == " ") and len(self.auth_fields[active_fn]) < 25: self.auth_fields[active_fn] += char
 
             elif self.state == "GAME":
+                pygame.key.set_repeat(150, 40)
                 if not self.game_over:
                     self.fall_time += dt
                     self.board.tiempo_acumulado_velocidad += dt
@@ -512,18 +446,17 @@ class TetrisGame:
                         self.board.tiempo_acumulado_velocidad = 0  
                     
                     if self.fall_time > self.board.intervalo_caida:
-                        if self.board.is_valid_move(self.current_piece, 0, 1): 
-                            self.current_piece.y += 1
+                        if self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1
                         else:
                             lines = self.board.lock_piece(self.current_piece)
-                            score_map = [0, 100, 300, 500, 800]
+                            score_map = {0: 0, 1: 100, 2: 300, 3: 500, 4: 800}
                             self.score += score_map[lines] if lines < len(score_map) else 1210
                             
                             nueva_pieza_temp = self.queue.popleft()
-                            if not self.board.is_valid_move(nueva_pieza_temp, 0, 0):
+                            if not self.board.is_valid_move(nueva_pieza_temp, 0, 0): 
                                 self.game_over = True
-                                self.save_score()
-                            else:
+                                self.save_score() # Solo se guardará si el flag de práctica está en False
+                            else: 
                                 self.current_piece = nueva_pieza_temp
                                 self.queue.append(Tetrimino(3, 0, self.get_random_piece_idx()))
                                 self.can_hold = True
@@ -542,9 +475,7 @@ class TetrisGame:
                                 if not self.board.is_valid_move(self.current_piece, 0, 0): self.current_piece.shape = old
                             if event.key == pygame.K_SPACE:
                                 drop = 0
-                                while self.board.is_valid_move(self.current_piece, 0, 1):
-                                    self.current_piece.y += 1
-                                    drop += 1
+                                while self.board.is_valid_move(self.current_piece, 0, 1): self.current_piece.y += 1; drop += 1
                                 self.score += (drop * 2)
                             if event.key == pygame.K_c: self.handle_hold()
                 self.draw_game()
